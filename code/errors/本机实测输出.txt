@@ -1,0 +1,228 @@
+=== 一、可运行的部分（先编译出来）===
+
+=== 二、编译期错误：默认输出（诊断 GBK、源码回显里的中文乱码）===
+########## ErrCannotFindSymbol.java ##########
+ErrCannotFindSymbol.java:4: 错误: 找不到符号
+        System.out.println(totl);       // 拼错变量名：编译器说的是"找不到符号"
+                           ^
+  符号:   变量 totl
+  位置: 类 ErrCannotFindSymbol
+1 个错误
+
+（本机 javac 写的是 GBK 字节：同一串字节若按 UTF-8 解读，提示与源码回显会全部变乱码。
+  这里借 PowerShell 按代码页 936 解码后才显示正常；对照下面第三节——那是 javac 自己按 UTF-8 写的。）
+
+=== 三、同一批代码，加 -J-Dstderr.encoding=UTF-8 之后（本套笔记推荐口径）===
+
+########## ErrMissingReturn.java ##########
+ErrMissingReturn.java:5: 错误: 缺少返回语句
+    }
+    ^
+1 个错误
+
+########## ErrCannotFindSymbol.java ##########
+ErrCannotFindSymbol.java:4: 错误: 找不到符号
+        System.out.println(totl);       // 拼错变量名：编译器说的是"找不到符号"
+                           ^
+  符号:   变量 totl
+  位置: 类 ErrCannotFindSymbol
+1 个错误
+
+########## ErrIncompatibleTypes.java ##########
+ErrIncompatibleTypes.java:3: 错误: 不兼容的类型: int无法转换为String
+        String s = 123;                 // int 不会自动变 String（C 里也不会，但 Java 连警告都不给）
+                   ^
+1 个错误
+
+########## ErrNoSemicolon.java ##########
+ErrNoSemicolon.java:3: 错误: 需要';'
+        int x = 1
+                 ^
+1 个错误
+
+########## ErrUnreachable.java ##########
+ErrUnreachable.java:4: 错误: 无法访问的语句
+        System.out.println("永远到不了这里");
+        ^
+1 个错误
+
+########## ErrCheckedException.java ##########
+ErrCheckedException.java:5: 错误: 未报告的异常错误FileNotFoundException; 必须对其进行捕获或声明以便抛出
+        FileReader r = new FileReader("nope.txt");   // 受检异常：不处理就编译不过
+                       ^
+1 个错误
+
+########## ErrStaticContext.java ##########
+ErrStaticContext.java:4: 错误: 无法从静态上下文中引用非静态 变量 x
+        System.out.println(x);              // 静态方法里直接摸实例字段
+                           ^
+1 个错误
+
+########## ErrBadFileName.java ##########
+ErrBadFileName.java:1: 错误: 类 WrongName 是公共的, 应在名为 WrongName.java 的文件中声明
+public class WrongName {                    // 文件名是 ErrBadFileName.java
+       ^
+1 个错误
+
+=== 四、换成英文提示（-J-Duser.language=en；编码要一起加，否则回显还是乱码）===
+ErrCannotFindSymbol.java:4: error: cannot find symbol
+        System.out.println(totl);       // 拼错变量名：编译器说的是"找不到符号"
+                           ^
+  symbol:   variable totl
+  location: class ErrCannotFindSymbol
+1 error
+
+=== 五、运行期异常（捕获后打印）与未捕获异常（JVM 默认输出）===
+
+[NullPointerException（有用提示，JDK 15+ 默认开）]
+  java.lang.NullPointerException: Cannot invoke "String.length()" because "<local0>" is null
+    at RunErrors.lambda$main$0(RunErrors.java:8)
+    at RunErrors.probe(RunErrors.java:58)
+    at RunErrors.main(RunErrors.java:6)
+
+[ArrayIndexOutOfBoundsException]
+  java.lang.ArrayIndexOutOfBoundsException: Index 5 out of bounds for length 3
+    at RunErrors.lambda$main$1(RunErrors.java:12)
+    at RunErrors.probe(RunErrors.java:58)
+    at RunErrors.main(RunErrors.java:10)
+
+[ClassCastException]
+  java.lang.ClassCastException: class java.lang.String cannot be cast to class java.lang.Integer (java.lang.String and java.lang.Integer are in module java.base of loader 'bootstrap')
+    at RunErrors.lambda$main$2(RunErrors.java:16)
+    at RunErrors.probe(RunErrors.java:58)
+    at RunErrors.main(RunErrors.java:14)
+
+[NumberFormatException]
+  java.lang.NumberFormatException: For input string: "12x"
+    at java.base/java.lang.NumberFormatException.forInputString(NumberFormatException.java:67)
+    at java.base/java.lang.Integer.parseInt(Integer.java:565)
+    at java.base/java.lang.Integer.parseInt(Integer.java:662)
+    ... 3 more
+
+[StringIndexOutOfBoundsException]
+  java.lang.StringIndexOutOfBoundsException: Index 9 out of bounds for length 3
+    at java.base/jdk.internal.util.Preconditions$1.apply(Preconditions.java:55)
+    at java.base/jdk.internal.util.Preconditions$1.apply(Preconditions.java:52)
+    at java.base/jdk.internal.util.Preconditions$4.apply(Preconditions.java:213)
+    ... 10 more
+
+[ArithmeticException（整数除零）]
+  java.lang.ArithmeticException: / by zero
+    at RunErrors.lambda$main$5(RunErrors.java:25)
+    at RunErrors.probe(RunErrors.java:58)
+    at RunErrors.main(RunErrors.java:24)
+
+[UnsupportedOperationException]
+  java.lang.UnsupportedOperationException: null
+    at java.base/java.util.ImmutableCollections.uoe(ImmutableCollections.java:159)
+    at java.base/java.util.ImmutableCollections$AbstractImmutableCollection.add(ImmutableCollections.java:164)
+    at RunErrors.lambda$main$6(RunErrors.java:28)
+    ... 2 more
+
+[NoSuchElementException（Scanner 读完了还在读）]
+  java.util.NoSuchElementException: null
+    at java.base/java.util.Scanner.throwFor(Scanner.java:975)
+    at java.base/java.util.Scanner.next(Scanner.java:1516)
+    at RunErrors.lambda$main$7(RunErrors.java:33)
+    ... 2 more
+
+[StackOverflowError（错误，不是异常）]
+  java.lang.StackOverflowError: null
+    at RunErrors.recurse(RunErrors.java:52)
+    at RunErrors.recurse(RunErrors.java:52)
+    at RunErrors.recurse(RunErrors.java:52)
+    ... 1021 more
+
+[异常链（Caused by）]
+  java.lang.IllegalStateException: 上层包装：读取配置失败
+    at RunErrors.lambda$main$9(RunErrors.java:42)
+    at RunErrors.probe(RunErrors.java:58)
+    at RunErrors.main(RunErrors.java:38)
+
+[NullPointerException（对象数组里放了 null）]
+  java.lang.NullPointerException: Cannot invoke "String.toUpperCase()" because "<local0>[1]" is null
+    at RunErrors.lambda$main$10(RunErrors.java:47)
+    at RunErrors.probe(RunErrors.java:58)
+    at RunErrors.main(RunErrors.java:45)
+
+--- 共同点：消息里有"是什么"和"哪里"，先读第一行，再看第一帧属于你自己的类还是 JDK ---
+
+########## RunUncaught（不捕获，看默认栈）##########
+main 开始
+Exception in thread "main" java.lang.NullPointerException: Cannot invoke "String.length()" because "<local0>" is null
+	at RunUncaught.helper(RunUncaught.java:11)
+	at RunUncaught.main(RunUncaught.java:5)
+（RunUncaught 的退出码：1）
+
+=== 六、NPE 提示里的变量名靠 -g（对照上一节的 <local0>）===
+--- 重新用 -g 编译（目标文件里带上 LocalVariableTable）---
+main 开始
+Exception in thread "main" java.lang.NullPointerException: Cannot invoke "String.length()" because "s" is null
+	at RunUncaught.helper(RunUncaught.java:11)
+	at RunUncaught.main(RunUncaught.java:5)
+
+########## RunChained（未捕获的异常链，看 Caused by）##########
+Exception in thread "main" java.lang.IllegalStateException: 上层包装：读取配置失败
+	at RunChained.main(RunChained.java:9)
+Caused by: java.io.IOException: 底层原因：文件不存在
+	at RunChained.main(RunChained.java:7)
+
+=== 七、警告：默认基本不显示，要 -Xlint 才打开（WarnCases.java，两段都能编译通过）===
+--- 默认 javac（注意：几乎什么都不说）---
+注: WarnCases.java使用了未经检查或不安全的操作。
+注: 有关详细信息, 请使用 -Xlint:unchecked 重新编译。
+（默认编译的退出码：0，.class 已产出）
+--- 加 -Xlint:all ---
+WarnCases.java:11: 警告: [rawtypes] 找到原始类型: List
+        List raw = new ArrayList();        // 原始类型：丢掉了泛型检查
+        ^
+  缺少泛型类List<E>的类型参数
+  其中, E是类型变量:
+    E扩展已在接口 List中声明的Object
+WarnCases.java:11: 警告: [rawtypes] 找到原始类型: ArrayList
+        List raw = new ArrayList();        // 原始类型：丢掉了泛型检查
+                       ^
+  缺少泛型类ArrayList<E>的类型参数
+  其中, E是类型变量:
+    E扩展已在类 ArrayList中声明的Object
+WarnCases.java:12: 警告: [unchecked] 对作为原始类型List的成员的add(E)的调用未经过检查
+        raw.add("a string");
+               ^
+  其中, E是类型变量:
+    E扩展已在接口 List中声明的Object
+WarnCases.java:14: 警告: [unchecked] 未经检查的转换
+        typed = raw;                        // 未检查的转换
+                ^
+  需要: List<String>
+  找到:    List
+WarnCases.java:20: 警告: [fallthrough] 可能无法实现 case
+            case 2:
+            ^
+5 个警告
+--- 加 -Werror（把警告当错误，看它会不会挡住构建）---
+WarnCases.java:11: 警告: [rawtypes] 找到原始类型: List
+        List raw = new ArrayList();        // 原始类型：丢掉了泛型检查
+        ^
+  缺少泛型类List<E>的类型参数
+  其中, E是类型变量:
+    E扩展已在接口 List中声明的Object
+WarnCases.java:11: 警告: [rawtypes] 找到原始类型: ArrayList
+        List raw = new ArrayList();        // 原始类型：丢掉了泛型检查
+                       ^
+  缺少泛型类ArrayList<E>的类型参数
+  其中, E是类型变量:
+    E扩展已在类 ArrayList中声明的Object
+WarnCases.java:12: 警告: [unchecked] 对作为原始类型List的成员的add(E)的调用未经过检查
+        raw.add("a string");
+               ^
+  其中, E是类型变量:
+    E扩展已在接口 List中声明的Object
+WarnCases.java:14: 警告: [unchecked] 未经检查的转换
+        typed = raw;                        // 未检查的转换
+                ^
+  需要: List<String>
+  找到:    List
+错误: 发现警告, 但指定了 -Werror
+1 个错误
+4 个警告
+（-Werror 的退出码见上行输出）

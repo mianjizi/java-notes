@@ -1,0 +1,22 @@
+# 编译产物与临时文件（探针/靶场源码要提交，产物不要）
+*.class
+*.jar
+*.jfr
+*.exe
+*.o
+*.obj
+*.dll
+*.pdb
+*.stackdump
+*.log
+
+# Python
+__pycache__/
+*.pyc
+.venv/
+
+# 编辑器/系统
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/

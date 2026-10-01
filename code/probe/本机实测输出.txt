@@ -1,0 +1,966 @@
+
+================================================================
+=== 本次运行：2026-10-01 19:49:16  （日志是追加的，历史批次都留着）
+=== 提醒：并发段（i++ 竞态、虚拟线程耗时）的数字逐轮会变，这是特性不是 bug
+================================================================
+
+########## ProbeEnv ##########
+java.version             = 25.0.4.1
+java.version.date        = 2026-08-18
+java.vendor              = Eclipse Adoptium
+java.vendor.version      = Temurin-25.0.4.1+1
+java.runtime.name        = OpenJDK Runtime Environment
+java.vm.name             = OpenJDK 64-Bit Server VM
+java.vm.version          = 25.0.4.1+1-LTS
+java.home                = C:\Program Files\Eclipse Adoptium\jdk-25.0.4.101-hotspot
+java.class.version       = 69.0
+os.name                  = Windows 11
+os.version               = 10.0
+os.arch                  = amd64
+Runtime.version()        = 25.0.4.1+1-LTS
+file.encoding            = UTF-8
+native.encoding          = GBK
+stdout.encoding          = UTF-8
+sun.jnu.encoding         = GBK
+Charset.defaultCharset() = UTF-8
+line.separator           = \r\n
+availableProcessors      = 8
+maxMemory                = 8120 MiB
+totalMemory(启动初)         = 512 MiB
+GC collectors            = G1 Young Generation, G1 Concurrent GC, G1 Old Generation
+虚拟线程可用                   = true
+已加载模块数                   = 62
+
+########## ProbeTypes ##########
+byte  8 bit
+short 16 bit
+int   32 bit
+long  64 bit
+char  16 bit（UTF-16 码元，不是字节）
+float 32 bit / double 64 bit
+--- 溢出：静默回绕，不抛异常 ---
+Integer.MAX_VALUE     = 2147483647
+MAX_VALUE + 1         = -2147483648
+MAX_VALUE * 2         = -2
+Integer.MIN_VALUE - 1 = 2147483647
+Math.addExact 同运算   -> ArithmeticException: integer overflow
+--- 整数除法截断与除零 ---
+-7 / 2  = -3   （向零截断，不是向下取整）
+-7 % 2  = -1
+7 / 0   -> ArithmeticException: / by zero（整数除零抛异常，不是未定义行为）
+7.0 / 0 = Infinity   （浮点除零得 Infinity）
+--- char 不是字节：中文与 emoji ---
+'中' 的 char 数（length）= 1，码点数 = 1
+'😀' 的 char 数（length）= 2，码点数 = 1  （一个 char 装不下 -> 代理对）
+按字节数 UTF-8 编码：'中' = 3 字节，'😀' = 4 字节
+--- 自动装箱与缓存（== 比较的经典陷阱）---
+Integer 127 == 127 -> true（缓存 -128..127）
+Integer 128 == 128 -> false（超出缓存，两个对象）
+Integer 128 equals 128 -> true
+--- 浮点：不要用 == 比小数 ---
+0.1 + 0.2        = 0.30000000000000004
+0.1 + 0.2 == 0.3 -> false
+BigDecimal       = 0.3
+--- 局部变量类型推断 var（Java 10+）---
+var list = List.of(1,2,3) -> java.util.ImmutableCollections$ListN [1, 2, 3]
+
+########## ProbeOop ##########
+--- 记录类：自动得到 equals/hashCode/toString/访问器 ---
+p1 = Point[x=3, y=4]
+p1.equals(p2) = true（值语义，不用自己写）
+p1.x() = 3（访问器不是 getX()）
+是 final 类吗 = true
+--- 密封接口 + switch 模式匹配：穷尽性由编译器检查 ---
+Circle[r=1.0]          面积 = 3.1416
+Square[a=2.0]          面积 = 4.0000
+--- equals/hashCode 契约：只改一半会出什么事 ---
+contains(等值新对象) = false（equals 说相等，但 HashSet 按 hashCode 找，找不到）
+--- 枚举：可以带字段与方法，switch 也是穷尽的 ---
+LOW   ordinal=0 name()=LOW
+MID   ordinal=1 name()=MID
+HIGH  ordinal=2 name()=HIGH
+valueOf("MID") = MID
+--- 初始化顺序：静态 -> 实例 -> 构造体 ---
+1 静态初始化块
+  2 实例初始化块
+  3 构造体
+--- 接口默认方法：不破坏已有实现地加方法 ---
+hello from default method
+--- Stream：声明式流水线，本身不改变原集合 ---
+原集合        = [5, 1, 4, 2, 3]
+sorted+map    = [10, 20, 30, 40, 50]
+原集合仍然    = [5, 1, 4, 2, 3]（不可变）
+过滤求和      = 9
+分组          = {偶=[4, 2], 奇=[5, 1, 3]}
+
+########## ProbeCollections ##########
+--- 同一条声明，换实现类改变的是性能不是语义 ---
+ArrayList   = java.util.ArrayList
+LinkedList  = java.util.LinkedList
+链表随机访问 get(1) 很慢（要走到第 1 个节点）
+--- 遍历时修改集合：fail-fast 只在"下一次 next()"时才检查 ---
+删开头元素 -> ConcurrentModificationException（下次 next() 比对 modCount 发现）
+删倒数第二个 -> 没抛异常，y = [a, c]  ← 循环恰好结束，检查根本没执行（fail-fast 会漏检）
+正确写法 iterator.remove()：[c, b] 集合 = [c, b]
+或 removeIf：[c, b]
+--- List.of / Map.of 是不可变的，不是"可改的只读视图" ---
+List.of(...).add -> UnsupportedOperationException
+--- HashMap：无序不是"随便"，是哈希与容量决定 ---
+HashMap 遍历 = [banana, apple, cherry]
+TreeMap 遍历 = [apple, banana, cherry]（按键排序）
+LinkedHashMap = [banana, apple, cherry]（按插入顺序）
+--- hashCode 全冲突时会发生什么（只会变慢，不会算错）---
+放 20000 个 hashCode 全相同的键：size=20000，耗时 1118 ms（正常应是毫秒级以下）
+--- 泛型：编译期检查 + 类型擦除 ---
+List<String>.getClass() = java.util.ArrayList（运行时看不到 <String>）
+List<String> 与 List<Integer> 的 getClass() 相等 = true
+--- 常用收尾：Map.merge / computeIfAbsent ---
+computeIfAbsent 累加 = {奇数=[1, 3]}
+getOrDefault = -1
+
+########## ProbeConcurrent ##########
+--- 竞态：同一个计数器，加锁与不加锁 ---
+i++ (无同步)        第1轮 期望 200000，实测 52200
+i++ (无同步)        第2轮 期望 200000，实测 60365
+AtomicInteger    第1轮 期望 200000，实测 200000
+AtomicInteger    第2轮 期望 200000，实测 200000
+两者本轮观测：200000 次递增，无同步版几乎总是小于 200000
+--- 虚拟线程：平台线程做不到的规模 ---
+虚拟线程 50000 个任务全部 join：sum=50000，耗时 89 ms
+虚拟线程实现类 = java.lang.VirtualThread
+--- CompletableFuture：回调式组合 ---
+结果 42
+--- 线程安全的集合选择 ---
+ConcurrentHashMap.merge 两次 = {a=2}（普通 HashMap 并发 put 会丢更新）
+
+########## ProbeEncoding ##########
+file.encoding      = UTF-8
+native.encoding    = GBK
+stdout.encoding    = UTF-8
+默认 Charset        = UTF-8
+直接打印中文测试：你好，Java
+源码里带中文的字符串长度 = 7（4 个 ASCII + 2 个汉字 = 6 个 char）
+--- 显式指定 UTF-8 读写（不要依赖平台默认）---
+读回：第一行：中文\nsecond line\n
+UTF-8 字节数 = 31
+同一内容用 GBK 写，字节数 = 13（UTF-8 是 6+6+1=13 字节量级）
+读失败：MalformedInputException
+
+================================================================
+=== 本次运行：2026-10-01 19:49:19  （日志是追加的，历史批次都留着）
+=== 提醒：并发段（i++ 竞态、虚拟线程耗时）的数字逐轮会变，这是特性不是 bug
+================================================================
+
+########## ProbeEnv ##########
+java.version             = 25.0.4.1
+java.version.date        = 2026-08-18
+java.vendor              = Eclipse Adoptium
+java.vendor.version      = Temurin-25.0.4.1+1
+java.runtime.name        = OpenJDK Runtime Environment
+java.vm.name             = OpenJDK 64-Bit Server VM
+java.vm.version          = 25.0.4.1+1-LTS
+java.home                = C:\Program Files\Eclipse Adoptium\jdk-25.0.4.101-hotspot
+java.class.version       = 69.0
+os.name                  = Windows 11
+os.version               = 10.0
+os.arch                  = amd64
+Runtime.version()        = 25.0.4.1+1-LTS
+file.encoding            = UTF-8
+native.encoding          = GBK
+stdout.encoding          = UTF-8
+sun.jnu.encoding         = GBK
+Charset.defaultCharset() = UTF-8
+line.separator           = \r\n
+availableProcessors      = 8
+maxMemory                = 8120 MiB
+totalMemory(启动初)         = 512 MiB
+GC collectors            = G1 Young Generation, G1 Concurrent GC, G1 Old Generation
+虚拟线程可用                   = true
+已加载模块数                   = 62
+
+########## ProbeTypes ##########
+byte  8 bit
+short 16 bit
+int   32 bit
+long  64 bit
+char  16 bit（UTF-16 码元，不是字节）
+float 32 bit / double 64 bit
+--- 溢出：静默回绕，不抛异常 ---
+Integer.MAX_VALUE     = 2147483647
+MAX_VALUE + 1         = -2147483648
+MAX_VALUE * 2         = -2
+Integer.MIN_VALUE - 1 = 2147483647
+Math.addExact 同运算   -> ArithmeticException: integer overflow
+--- 整数除法截断与除零 ---
+-7 / 2  = -3   （向零截断，不是向下取整）
+-7 % 2  = -1
+7 / 0   -> ArithmeticException: / by zero（整数除零抛异常，不是未定义行为）
+7.0 / 0 = Infinity   （浮点除零得 Infinity）
+--- char 不是字节：中文与 emoji ---
+'中' 的 char 数（length）= 1，码点数 = 1
+'😀' 的 char 数（length）= 2，码点数 = 1  （一个 char 装不下 -> 代理对）
+按字节数 UTF-8 编码：'中' = 3 字节，'😀' = 4 字节
+--- 自动装箱与缓存（== 比较的经典陷阱）---
+Integer 127 == 127 -> true（缓存 -128..127）
+Integer 128 == 128 -> false（超出缓存，两个对象）
+Integer 128 equals 128 -> true
+--- 浮点：不要用 == 比小数 ---
+0.1 + 0.2        = 0.30000000000000004
+0.1 + 0.2 == 0.3 -> false
+BigDecimal       = 0.3
+--- 局部变量类型推断 var（Java 10+）---
+var list = List.of(1,2,3) -> java.util.ImmutableCollections$ListN [1, 2, 3]
+
+########## ProbeOop ##########
+--- 记录类：自动得到 equals/hashCode/toString/访问器 ---
+p1 = Point[x=3, y=4]
+p1.equals(p2) = true（值语义，不用自己写）
+p1.x() = 3（访问器不是 getX()）
+是 final 类吗 = true
+--- 密封接口 + switch 模式匹配：穷尽性由编译器检查 ---
+Circle[r=1.0]          面积 = 3.1416
+Square[a=2.0]          面积 = 4.0000
+--- equals/hashCode 契约：只改一半会出什么事 ---
+contains(等值新对象) = false（equals 说相等，但 HashSet 按 hashCode 找，找不到）
+--- 枚举：可以带字段与方法，switch 也是穷尽的 ---
+LOW   ordinal=0 name()=LOW
+MID   ordinal=1 name()=MID
+HIGH  ordinal=2 name()=HIGH
+valueOf("MID") = MID
+--- 初始化顺序：静态 -> 实例 -> 构造体 ---
+1 静态初始化块
+  2 实例初始化块
+  3 构造体
+--- 接口默认方法：不破坏已有实现地加方法 ---
+hello from default method
+--- Stream：声明式流水线，本身不改变原集合 ---
+原集合        = [5, 1, 4, 2, 3]
+sorted+map    = [10, 20, 30, 40, 50]
+原集合仍然    = [5, 1, 4, 2, 3]（不可变）
+过滤求和      = 9
+分组          = {偶=[4, 2], 奇=[5, 1, 3]}
+
+########## ProbeCollections ##########
+--- 同一条声明，换实现类改变的是性能不是语义 ---
+ArrayList   = java.util.ArrayList
+LinkedList  = java.util.LinkedList
+链表随机访问 get(1) 很慢（要走到第 1 个节点）
+--- 遍历时修改集合：fail-fast 只在"下一次 next()"时才检查 ---
+删开头元素 -> ConcurrentModificationException（下次 next() 比对 modCount 发现）
+删倒数第二个 -> 没抛异常，y = [a, c]  ← 循环恰好结束，检查根本没执行（fail-fast 会漏检）
+正确写法 iterator.remove()：[c, b] 集合 = [c, b]
+或 removeIf：[c, b]
+--- List.of / Map.of 是不可变的，不是"可改的只读视图" ---
+List.of(...).add -> UnsupportedOperationException
+--- HashMap：无序不是"随便"，是哈希与容量决定 ---
+HashMap 遍历 = [banana, apple, cherry]
+TreeMap 遍历 = [apple, banana, cherry]（按键排序）
+LinkedHashMap = [banana, apple, cherry]（按插入顺序）
+--- hashCode 全冲突时会发生什么（只会变慢，不会算错）---
+放 20000 个 hashCode 全相同的键：size=20000，耗时 1136 ms（正常应是毫秒级以下）
+--- 泛型：编译期检查 + 类型擦除 ---
+List<String>.getClass() = java.util.ArrayList（运行时看不到 <String>）
+List<String> 与 List<Integer> 的 getClass() 相等 = true
+--- 常用收尾：Map.merge / computeIfAbsent ---
+computeIfAbsent 累加 = {奇数=[1, 3]}
+getOrDefault = -1
+
+########## ProbeConcurrent ##########
+--- 竞态：同一个计数器，加锁与不加锁 ---
+i++ (无同步)        第1轮 期望 200000，实测 60198
+i++ (无同步)        第2轮 期望 200000，实测 74237
+AtomicInteger    第1轮 期望 200000，实测 200000
+AtomicInteger    第2轮 期望 200000，实测 200000
+两者本轮观测：200000 次递增，无同步版几乎总是小于 200000
+--- 虚拟线程：平台线程做不到的规模 ---
+虚拟线程 50000 个任务全部 join：sum=50000，耗时 122 ms
+虚拟线程实现类 = java.lang.VirtualThread
+--- CompletableFuture：回调式组合 ---
+结果 42
+--- 线程安全的集合选择 ---
+ConcurrentHashMap.merge 两次 = {a=2}（普通 HashMap 并发 put 会丢更新）
+
+########## ProbeEncoding ##########
+file.encoding      = UTF-8
+native.encoding    = GBK
+stdout.encoding    = UTF-8
+默认 Charset        = UTF-8
+直接打印中文测试：你好，Java
+源码里带中文的字符串长度 = 7（4 个 ASCII + 2 个汉字 = 6 个 char）
+--- 显式指定 UTF-8 读写（不要依赖平台默认）---
+读回：第一行：中文\nsecond line\n
+UTF-8 字节数 = 31
+同一内容用 GBK 写，字节数 = 13（UTF-8 是 6+6+1=13 字节量级）
+读失败：MalformedInputException
+
+================================================================
+=== 本次运行：2026-10-01 19:49:51  （日志是追加的，历史批次都留着）
+=== 提醒：并发段（i++ 竞态、虚拟线程耗时）的数字逐轮会变，这是特性不是 bug
+================================================================
+
+########## ProbeEnv ##########
+java.version             = 25.0.4.1
+java.version.date        = 2026-08-18
+java.vendor              = Eclipse Adoptium
+java.vendor.version      = Temurin-25.0.4.1+1
+java.runtime.name        = OpenJDK Runtime Environment
+java.vm.name             = OpenJDK 64-Bit Server VM
+java.vm.version          = 25.0.4.1+1-LTS
+java.home                = C:\Program Files\Eclipse Adoptium\jdk-25.0.4.101-hotspot
+java.class.version       = 69.0
+os.name                  = Windows 11
+os.version               = 10.0
+os.arch                  = amd64
+Runtime.version()        = 25.0.4.1+1-LTS
+file.encoding            = UTF-8
+native.encoding          = GBK
+stdout.encoding          = UTF-8
+sun.jnu.encoding         = GBK
+Charset.defaultCharset() = UTF-8
+line.separator           = \r\n
+availableProcessors      = 8
+maxMemory                = 8120 MiB
+totalMemory(启动初)         = 512 MiB
+GC collectors            = G1 Young Generation, G1 Concurrent GC, G1 Old Generation
+虚拟线程可用                   = true
+已加载模块数                   = 62
+
+########## ProbeTypes ##########
+byte  8 bit
+short 16 bit
+int   32 bit
+long  64 bit
+char  16 bit（UTF-16 码元，不是字节）
+float 32 bit / double 64 bit
+--- 溢出：静默回绕，不抛异常 ---
+Integer.MAX_VALUE     = 2147483647
+MAX_VALUE + 1         = -2147483648
+MAX_VALUE * 2         = -2
+Integer.MIN_VALUE - 1 = 2147483647
+Math.addExact 同运算   -> ArithmeticException: integer overflow
+--- 整数除法截断与除零 ---
+-7 / 2  = -3   （向零截断，不是向下取整）
+-7 % 2  = -1
+7 / 0   -> ArithmeticException: / by zero（整数除零抛异常，不是未定义行为）
+7.0 / 0 = Infinity   （浮点除零得 Infinity）
+--- char 不是字节：中文与 emoji ---
+'中' 的 char 数（length）= 1，码点数 = 1
+'😀' 的 char 数（length）= 2，码点数 = 1  （一个 char 装不下 -> 代理对）
+按字节数 UTF-8 编码：'中' = 3 字节，'😀' = 4 字节
+--- 自动装箱与缓存（== 比较的经典陷阱）---
+Integer 127 == 127 -> true（缓存 -128..127）
+Integer 128 == 128 -> false（超出缓存，两个对象）
+Integer 128 equals 128 -> true
+--- 浮点：不要用 == 比小数 ---
+0.1 + 0.2        = 0.30000000000000004
+0.1 + 0.2 == 0.3 -> false
+BigDecimal       = 0.3
+--- 局部变量类型推断 var（Java 10+）---
+var list = List.of(1,2,3) -> java.util.ImmutableCollections$ListN [1, 2, 3]
+
+########## ProbeOop ##########
+--- 记录类：自动得到 equals/hashCode/toString/访问器 ---
+p1 = Point[x=3, y=4]
+p1.equals(p2) = true（值语义，不用自己写）
+p1.x() = 3（访问器不是 getX()）
+是 final 类吗 = true
+--- 密封接口 + switch 模式匹配：穷尽性由编译器检查 ---
+Circle[r=1.0]          面积 = 3.1416
+Square[a=2.0]          面积 = 4.0000
+--- equals/hashCode 契约：只改一半会出什么事 ---
+contains(等值新对象) = false（equals 说相等，但 HashSet 按 hashCode 找，找不到）
+--- 枚举：可以带字段与方法，switch 也是穷尽的 ---
+LOW   ordinal=0 name()=LOW
+MID   ordinal=1 name()=MID
+HIGH  ordinal=2 name()=HIGH
+valueOf("MID") = MID
+--- 初始化顺序：静态 -> 实例 -> 构造体 ---
+1 静态初始化块
+  2 实例初始化块
+  3 构造体
+--- 接口默认方法：不破坏已有实现地加方法 ---
+hello from default method
+--- Stream：声明式流水线，本身不改变原集合 ---
+原集合        = [5, 1, 4, 2, 3]
+sorted+map    = [10, 20, 30, 40, 50]
+原集合仍然    = [5, 1, 4, 2, 3]（不可变）
+过滤求和      = 9
+分组          = {偶=[4, 2], 奇=[5, 1, 3]}
+
+########## ProbeCollections ##########
+--- 同一条声明，换实现类改变的是性能不是语义 ---
+ArrayList   = java.util.ArrayList
+LinkedList  = java.util.LinkedList
+链表随机访问 get(1) 很慢（要走到第 1 个节点）
+--- 遍历时修改集合：fail-fast 只在"下一次 next()"时才检查 ---
+删开头元素 -> ConcurrentModificationException（下次 next() 比对 modCount 发现）
+删倒数第二个 -> 没抛异常，y = [a, c]  ← 循环恰好结束，检查根本没执行（fail-fast 会漏检）
+正确写法 iterator.remove()：[c, b] 集合 = [c, b]
+或 removeIf：[c, b]
+--- List.of / Map.of 是不可变的，不是"可改的只读视图" ---
+List.of(...).add -> UnsupportedOperationException
+--- HashMap：无序不是"随便"，是哈希与容量决定 ---
+HashMap 遍历 = [banana, apple, cherry]
+TreeMap 遍历 = [apple, banana, cherry]（按键排序）
+LinkedHashMap = [banana, apple, cherry]（按插入顺序）
+--- hashCode 全冲突时会发生什么（只会变慢，不会算错）---
+放 20000 个 hashCode 全相同的键：size=20000，耗时 1427 ms（正常应是毫秒级以下）
+--- 泛型：编译期检查 + 类型擦除 ---
+List<String>.getClass() = java.util.ArrayList（运行时看不到 <String>）
+List<String> 与 List<Integer> 的 getClass() 相等 = true
+--- 常用收尾：Map.merge / computeIfAbsent ---
+computeIfAbsent 累加 = {奇数=[1, 3]}
+getOrDefault = -1
+
+########## ProbeConcurrent ##########
+--- 竞态：同一个计数器，加锁与不加锁 ---
+i++ (无同步)        第1轮 期望 200000，实测 81554
+i++ (无同步)        第2轮 期望 200000，实测 177331
+AtomicInteger    第1轮 期望 200000，实测 200000
+AtomicInteger    第2轮 期望 200000，实测 200000
+两者本轮观测：200000 次递增，无同步版几乎总是小于 200000
+--- 虚拟线程：平台线程做不到的规模 ---
+虚拟线程 50000 个任务全部 join：sum=50000，耗时 185 ms
+虚拟线程实现类 = java.lang.VirtualThread
+--- CompletableFuture：回调式组合 ---
+结果 42
+--- 线程安全的集合选择 ---
+ConcurrentHashMap.merge 两次 = {a=2}（普通 HashMap 并发 put 会丢更新）
+
+########## ProbeEncoding ##########
+file.encoding      = UTF-8
+native.encoding    = GBK
+stdout.encoding    = UTF-8
+默认 Charset        = UTF-8
+直接打印中文测试：你好，Java
+源码里带中文的字符串长度 = 7（4 个 ASCII + 2 个汉字 = 6 个 char）
+--- 显式指定 UTF-8 读写（不要依赖平台默认）---
+读回：第一行：中文\nsecond line\n
+UTF-8 字节数 = 31
+同一内容用 GBK 写，字节数 = 13（UTF-8 是 6+6+1=13 字节量级）
+读失败：MalformedInputException
+
+########## ProbeExtra ##########
+String.class.getClassLoader()            = null
+本探针的类加载器                                 = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+系统类加载器                                   = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+平台类加载器（旧名扩展）                             = jdk.internal.loader.ClassLoaders$PlatformClassLoader@8bcc55f
+ForkJoinPool.commonPool().getParallelism() = 7
+availableProcessors                      = 8
+maxMemory                                = 8120 MiB
+Object 是不是所有类的父类                         = true
+一个普通对象的类                                 = class java.lang.Object
+
+================================================================
+=== 本次运行：2026-10-01 19:55:13  （日志是追加的，历史批次都留着）
+=== 提醒：并发段（i++ 竞态、虚拟线程耗时）的数字逐轮会变，这是特性不是 bug
+================================================================
+
+########## ProbeEnv ##########
+java.version             = 25.0.4.1
+java.version.date        = 2026-08-18
+java.vendor              = Eclipse Adoptium
+java.vendor.version      = Temurin-25.0.4.1+1
+java.runtime.name        = OpenJDK Runtime Environment
+java.vm.name             = OpenJDK 64-Bit Server VM
+java.vm.version          = 25.0.4.1+1-LTS
+java.home                = C:\Program Files\Eclipse Adoptium\jdk-25.0.4.101-hotspot
+java.class.version       = 69.0
+os.name                  = Windows 11
+os.version               = 10.0
+os.arch                  = amd64
+Runtime.version()        = 25.0.4.1+1-LTS
+file.encoding            = UTF-8
+native.encoding          = GBK
+stdout.encoding          = UTF-8
+sun.jnu.encoding         = GBK
+Charset.defaultCharset() = UTF-8
+line.separator           = \r\n
+availableProcessors      = 8
+maxMemory                = 8120 MiB
+totalMemory(启动初)         = 512 MiB
+GC collectors            = G1 Young Generation, G1 Concurrent GC, G1 Old Generation
+虚拟线程可用                   = true
+已加载模块数                   = 62
+
+########## ProbeTypes ##########
+byte  8 bit
+short 16 bit
+int   32 bit
+long  64 bit
+char  16 bit（UTF-16 码元，不是字节）
+float 32 bit / double 64 bit
+--- 溢出：静默回绕，不抛异常 ---
+Integer.MAX_VALUE     = 2147483647
+MAX_VALUE + 1         = -2147483648
+MAX_VALUE * 2         = -2
+Integer.MIN_VALUE - 1 = 2147483647
+Math.addExact 同运算   -> ArithmeticException: integer overflow
+--- 整数除法截断与除零 ---
+-7 / 2  = -3   （向零截断，不是向下取整）
+-7 % 2  = -1
+7 / 0   -> ArithmeticException: / by zero（整数除零抛异常，不是未定义行为）
+7.0 / 0 = Infinity   （浮点除零得 Infinity）
+--- char 不是字节：中文与 emoji ---
+'中' 的 char 数（length）= 1，码点数 = 1
+'😀' 的 char 数（length）= 2，码点数 = 1  （一个 char 装不下 -> 代理对）
+按字节数 UTF-8 编码：'中' = 3 字节，'😀' = 4 字节
+--- 自动装箱与缓存（== 比较的经典陷阱）---
+Integer 127 == 127 -> true（缓存 -128..127）
+Integer 128 == 128 -> false（超出缓存，两个对象）
+Integer 128 equals 128 -> true
+--- 浮点：不要用 == 比小数 ---
+0.1 + 0.2        = 0.30000000000000004
+0.1 + 0.2 == 0.3 -> false
+BigDecimal       = 0.3
+--- 局部变量类型推断 var（Java 10+）---
+var list = List.of(1,2,3) -> java.util.ImmutableCollections$ListN [1, 2, 3]
+
+########## ProbeOop ##########
+--- 记录类：自动得到 equals/hashCode/toString/访问器 ---
+p1 = Point[x=3, y=4]
+p1.equals(p2) = true（值语义，不用自己写）
+p1.x() = 3（访问器不是 getX()）
+是 final 类吗 = true
+--- 密封接口 + switch 模式匹配：穷尽性由编译器检查 ---
+Circle[r=1.0]          面积 = 3.1416
+Square[a=2.0]          面积 = 4.0000
+--- equals/hashCode 契约：只改一半会出什么事 ---
+contains(等值新对象) = false（equals 说相等，但 HashSet 按 hashCode 找，找不到）
+--- 枚举：可以带字段与方法，switch 也是穷尽的 ---
+LOW   ordinal=0 name()=LOW
+MID   ordinal=1 name()=MID
+HIGH  ordinal=2 name()=HIGH
+valueOf("MID") = MID
+--- 初始化顺序：静态 -> 实例 -> 构造体 ---
+1 静态初始化块
+  2 实例初始化块
+  3 构造体
+--- 接口默认方法：不破坏已有实现地加方法 ---
+hello from default method
+--- Stream：声明式流水线，本身不改变原集合 ---
+原集合        = [5, 1, 4, 2, 3]
+sorted+map    = [10, 20, 30, 40, 50]
+原集合仍然    = [5, 1, 4, 2, 3]（不可变）
+过滤求和      = 9
+分组          = {偶=[4, 2], 奇=[5, 1, 3]}
+
+########## ProbeCollections ##########
+--- 同一条声明，换实现类改变的是性能不是语义 ---
+ArrayList   = java.util.ArrayList
+LinkedList  = java.util.LinkedList
+链表随机访问 get(1) 很慢（要走到第 1 个节点）
+--- 遍历时修改集合：fail-fast 只在"下一次 next()"时才检查 ---
+删开头元素 -> ConcurrentModificationException（下次 next() 比对 modCount 发现）
+删倒数第二个 -> 没抛异常，y = [a, c]  ← 循环恰好结束，检查根本没执行（fail-fast 会漏检）
+正确写法 iterator.remove()：[c, b] 集合 = [c, b]
+或 removeIf：[c, b]
+--- List.of / Map.of 是不可变的，不是"可改的只读视图" ---
+List.of(...).add -> UnsupportedOperationException
+--- HashMap：无序不是"随便"，是哈希与容量决定 ---
+HashMap 遍历 = [banana, apple, cherry]
+TreeMap 遍历 = [apple, banana, cherry]（按键排序）
+LinkedHashMap = [banana, apple, cherry]（按插入顺序）
+--- hashCode 全冲突时会发生什么（只会变慢，不会算错）---
+放 20000 个 hashCode 全相同的键：size=20000，耗时 1069 ms（正常应是毫秒级以下）
+--- 泛型：编译期检查 + 类型擦除 ---
+List<String>.getClass() = java.util.ArrayList（运行时看不到 <String>）
+List<String> 与 List<Integer> 的 getClass() 相等 = true
+--- 常用收尾：Map.merge / computeIfAbsent ---
+computeIfAbsent 累加 = {奇数=[1, 3]}
+getOrDefault = -1
+
+########## ProbeConcurrent ##########
+--- 竞态：同一个计数器，加锁与不加锁 ---
+i++ (无同步)        第1轮 期望 200000，实测 54980
+i++ (无同步)        第2轮 期望 200000，实测 59719
+AtomicInteger    第1轮 期望 200000，实测 200000
+AtomicInteger    第2轮 期望 200000，实测 200000
+两者本轮观测：200000 次递增，无同步版几乎总是小于 200000
+--- 虚拟线程：平台线程做不到的规模 ---
+虚拟线程 50000 个任务全部 join：sum=50000，耗时 103 ms
+虚拟线程实现类 = java.lang.VirtualThread
+--- CompletableFuture：回调式组合 ---
+结果 42
+--- 线程安全的集合选择 ---
+ConcurrentHashMap.merge 两次 = {a=2}（普通 HashMap 并发 put 会丢更新）
+
+########## ProbeEncoding ##########
+file.encoding      = UTF-8
+native.encoding    = GBK
+stdout.encoding    = UTF-8
+默认 Charset        = UTF-8
+直接打印中文测试：你好，Java
+源码里带中文的字符串长度 = 7（4 个 ASCII + 2 个汉字 = 6 个 char）
+--- 显式指定 UTF-8 读写（不要依赖平台默认）---
+读回：第一行：中文\nsecond line\n
+UTF-8 字节数 = 31
+同一内容用 GBK 写，字节数 = 13（UTF-8 是 6+6+1=13 字节量级）
+读失败：MalformedInputException
+
+########## ProbeExtra ##########
+String.class.getClassLoader()            = null
+本探针的类加载器                                 = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+系统类加载器                                   = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+平台类加载器（旧名扩展）                             = jdk.internal.loader.ClassLoaders$PlatformClassLoader@8bcc55f
+ForkJoinPool.commonPool().getParallelism() = 7
+availableProcessors                      = 8
+maxMemory                                = 8120 MiB
+Object 是不是所有类的父类                         = true
+一个普通对象的类                                 = class java.lang.Object
+系统模块总数（ModuleFinder，等于 java --list-modules 的行数） = 70
+引导层已加载模块数（ModuleLayer.boot）              = 62
+java.class.version                       = 69.0
+Runtime.version()                        = 25.0.4.1+1-LTS
+
+================================================================
+=== 本次运行：2026-10-01 19:57:35  （日志是追加的，历史批次都留着）
+=== 提醒：并发段（i++ 竞态、虚拟线程耗时）的数字逐轮会变，这是特性不是 bug
+================================================================
+
+########## ProbeDefaultEncoding（故意不带任何 -D 编码开关，看平台默认是什么） ##########
+file.encoding            = UTF-8
+native.encoding          = GBK
+stdout.encoding          = GBK
+stderr.encoding          = GBK
+stdin.encoding           = ms936
+sun.jnu.encoding         = GBK
+Charset.defaultCharset() = UTF-8
+����̨�Ƿ��ض�������ͨ���ܵ�д������Ϊ�棩  = true
+
+########## 下面各节都带了 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 ##########
+########## 所以本节里的 stdout.encoding 会报 UTF-8，与上面的默认值不同，不是矛盾 ##########
+
+########## ProbeEnv ##########
+java.version             = 25.0.4.1
+java.version.date        = 2026-08-18
+java.vendor              = Eclipse Adoptium
+java.vendor.version      = Temurin-25.0.4.1+1
+java.runtime.name        = OpenJDK Runtime Environment
+java.vm.name             = OpenJDK 64-Bit Server VM
+java.vm.version          = 25.0.4.1+1-LTS
+java.home                = C:\Program Files\Eclipse Adoptium\jdk-25.0.4.101-hotspot
+java.class.version       = 69.0
+os.name                  = Windows 11
+os.version               = 10.0
+os.arch                  = amd64
+Runtime.version()        = 25.0.4.1+1-LTS
+file.encoding            = UTF-8
+native.encoding          = GBK
+stdout.encoding          = UTF-8
+sun.jnu.encoding         = GBK
+Charset.defaultCharset() = UTF-8
+line.separator           = \r\n
+availableProcessors      = 8
+maxMemory                = 8120 MiB
+totalMemory(启动初)         = 512 MiB
+GC collectors            = G1 Young Generation, G1 Concurrent GC, G1 Old Generation
+虚拟线程可用                   = true
+已加载模块数                   = 62
+
+########## ProbeTypes ##########
+byte  8 bit
+short 16 bit
+int   32 bit
+long  64 bit
+char  16 bit（UTF-16 码元，不是字节）
+float 32 bit / double 64 bit
+--- 溢出：静默回绕，不抛异常 ---
+Integer.MAX_VALUE     = 2147483647
+MAX_VALUE + 1         = -2147483648
+MAX_VALUE * 2         = -2
+Integer.MIN_VALUE - 1 = 2147483647
+Math.addExact 同运算   -> ArithmeticException: integer overflow
+--- 整数除法截断与除零 ---
+-7 / 2  = -3   （向零截断，不是向下取整）
+-7 % 2  = -1
+7 / 0   -> ArithmeticException: / by zero（整数除零抛异常，不是未定义行为）
+7.0 / 0 = Infinity   （浮点除零得 Infinity）
+--- char 不是字节：中文与 emoji ---
+'中' 的 char 数（length）= 1，码点数 = 1
+'😀' 的 char 数（length）= 2，码点数 = 1  （一个 char 装不下 -> 代理对）
+按字节数 UTF-8 编码：'中' = 3 字节，'😀' = 4 字节
+--- 自动装箱与缓存（== 比较的经典陷阱）---
+Integer 127 == 127 -> true（缓存 -128..127）
+Integer 128 == 128 -> false（超出缓存，两个对象）
+Integer 128 equals 128 -> true
+--- 浮点：不要用 == 比小数 ---
+0.1 + 0.2        = 0.30000000000000004
+0.1 + 0.2 == 0.3 -> false
+BigDecimal       = 0.3
+--- 局部变量类型推断 var（Java 10+）---
+var list = List.of(1,2,3) -> java.util.ImmutableCollections$ListN [1, 2, 3]
+
+########## ProbeOop ##########
+--- 记录类：自动得到 equals/hashCode/toString/访问器 ---
+p1 = Point[x=3, y=4]
+p1.equals(p2) = true（值语义，不用自己写）
+p1.x() = 3（访问器不是 getX()）
+是 final 类吗 = true
+--- 密封接口 + switch 模式匹配：穷尽性由编译器检查 ---
+Circle[r=1.0]          面积 = 3.1416
+Square[a=2.0]          面积 = 4.0000
+--- equals/hashCode 契约：只改一半会出什么事 ---
+contains(等值新对象) = false（equals 说相等，但 HashSet 按 hashCode 找，找不到）
+--- 枚举：可以带字段与方法，switch 也是穷尽的 ---
+LOW   ordinal=0 name()=LOW
+MID   ordinal=1 name()=MID
+HIGH  ordinal=2 name()=HIGH
+valueOf("MID") = MID
+--- 初始化顺序：静态 -> 实例 -> 构造体 ---
+1 静态初始化块
+  2 实例初始化块
+  3 构造体
+--- 接口默认方法：不破坏已有实现地加方法 ---
+hello from default method
+--- Stream：声明式流水线，本身不改变原集合 ---
+原集合        = [5, 1, 4, 2, 3]
+sorted+map    = [10, 20, 30, 40, 50]
+原集合仍然    = [5, 1, 4, 2, 3]（不可变）
+过滤求和      = 9
+分组          = {偶=[4, 2], 奇=[5, 1, 3]}
+
+########## ProbeCollections ##########
+--- 同一条声明，换实现类改变的是性能不是语义 ---
+ArrayList   = java.util.ArrayList
+LinkedList  = java.util.LinkedList
+链表随机访问 get(1) 很慢（要走到第 1 个节点）
+--- 遍历时修改集合：fail-fast 只在"下一次 next()"时才检查 ---
+删开头元素 -> ConcurrentModificationException（下次 next() 比对 modCount 发现）
+删倒数第二个 -> 没抛异常，y = [a, c]  ← 循环恰好结束，检查根本没执行（fail-fast 会漏检）
+正确写法 iterator.remove()：[c, b] 集合 = [c, b]
+或 removeIf：[c, b]
+--- List.of / Map.of 是不可变的，不是"可改的只读视图" ---
+List.of(...).add -> UnsupportedOperationException
+--- HashMap：无序不是"随便"，是哈希与容量决定 ---
+HashMap 遍历 = [banana, apple, cherry]
+TreeMap 遍历 = [apple, banana, cherry]（按键排序）
+LinkedHashMap = [banana, apple, cherry]（按插入顺序）
+--- hashCode 全冲突时会发生什么（只会变慢，不会算错）---
+放 20000 个 hashCode 全相同的键：size=20000，耗时 1139 ms（正常应是毫秒级以下）
+--- 泛型：编译期检查 + 类型擦除 ---
+List<String>.getClass() = java.util.ArrayList（运行时看不到 <String>）
+List<String> 与 List<Integer> 的 getClass() 相等 = true
+--- 常用收尾：Map.merge / computeIfAbsent ---
+computeIfAbsent 累加 = {奇数=[1, 3]}
+getOrDefault = -1
+
+########## ProbeConcurrent ##########
+--- 竞态：同一个计数器，加锁与不加锁 ---
+i++ (无同步)        第1轮 期望 200000，实测 50771
+i++ (无同步)        第2轮 期望 200000，实测 56981
+AtomicInteger    第1轮 期望 200000，实测 200000
+AtomicInteger    第2轮 期望 200000，实测 200000
+两者本轮观测：200000 次递增，无同步版几乎总是小于 200000
+--- 虚拟线程：平台线程做不到的规模 ---
+虚拟线程 50000 个任务全部 join：sum=50000，耗时 127 ms
+虚拟线程实现类 = java.lang.VirtualThread
+--- CompletableFuture：回调式组合 ---
+结果 42
+--- 线程安全的集合选择 ---
+ConcurrentHashMap.merge 两次 = {a=2}（普通 HashMap 并发 put 会丢更新）
+
+########## ProbeEncoding ##########
+file.encoding      = UTF-8
+native.encoding    = GBK
+stdout.encoding    = UTF-8
+默认 Charset        = UTF-8
+直接打印中文测试：你好，Java
+s.length()（char 数）= 7（2 个汉字 + 1 个全角逗号 + 4 个 ASCII 字母 = 7 个 char）
+s 的 UTF-8 字节数 = 13（3+3+3+4 = 13 字节；char 数与字节数不是一个数）
+--- 同一段内容（含 1 行中文 + 1 行 ASCII），显式 UTF-8 读写 ---
+读回：第一行：中文\nsecond line\n
+UTF-8 字节数 = 31（中文 12 字节 + 全角冒号 3 字节 + ASCII 与换行 16 字节）
+同一段内容用 GBK 写，字节数 = 25（中文 8 字节 + 全角冒号 2 字节 + ASCII 与换行 16 字节；ASCII 部分两种编码完全一样）
+读失败：MalformedInputException
+
+########## ProbeExtra ##########
+String.class.getClassLoader()            = null
+本探针的类加载器                                 = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+系统类加载器                                   = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+平台类加载器（旧名扩展）                             = jdk.internal.loader.ClassLoaders$PlatformClassLoader@8bcc55f
+ForkJoinPool.commonPool().getParallelism() = 7
+availableProcessors                      = 8
+maxMemory                                = 8120 MiB
+Object 是不是所有类的父类                         = true
+一个普通对象的类                                 = class java.lang.Object
+系统模块总数（ModuleFinder，等于 java --list-modules 的行数） = 70
+引导层已加载模块数（ModuleLayer.boot）              = 62
+java.class.version                       = 69.0
+Runtime.version()                        = 25.0.4.1+1-LTS
+
+================================================================
+=== 本次运行：2026-10-01 19:57:53  （日志是追加的，历史批次都留着）
+=== 提醒：并发段（i++ 竞态、虚拟线程耗时）的数字逐轮会变，这是特性不是 bug
+================================================================
+
+########## ProbeDefaultEncoding（故意不带任何 -D 编码开关，看平台默认是什么） ##########
+file.encoding            = UTF-8
+native.encoding          = GBK
+stdout.encoding          = GBK
+stderr.encoding          = GBK
+stdin.encoding           = ms936
+sun.jnu.encoding         = GBK
+Charset.defaultCharset() = UTF-8
+console redirected (System.console() == null) = true
+
+########## 下面各节都带了 -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 ##########
+########## 所以本节里的 stdout.encoding 会报 UTF-8，与上面的默认值不同，不是矛盾 ##########
+
+########## ProbeEnv ##########
+java.version             = 25.0.4.1
+java.version.date        = 2026-08-18
+java.vendor              = Eclipse Adoptium
+java.vendor.version      = Temurin-25.0.4.1+1
+java.runtime.name        = OpenJDK Runtime Environment
+java.vm.name             = OpenJDK 64-Bit Server VM
+java.vm.version          = 25.0.4.1+1-LTS
+java.home                = C:\Program Files\Eclipse Adoptium\jdk-25.0.4.101-hotspot
+java.class.version       = 69.0
+os.name                  = Windows 11
+os.version               = 10.0
+os.arch                  = amd64
+Runtime.version()        = 25.0.4.1+1-LTS
+file.encoding            = UTF-8
+native.encoding          = GBK
+stdout.encoding          = UTF-8
+sun.jnu.encoding         = GBK
+Charset.defaultCharset() = UTF-8
+line.separator           = \r\n
+availableProcessors      = 8
+maxMemory                = 8120 MiB
+totalMemory(启动初)         = 512 MiB
+GC collectors            = G1 Young Generation, G1 Concurrent GC, G1 Old Generation
+虚拟线程可用                   = true
+已加载模块数                   = 62
+
+########## ProbeTypes ##########
+byte  8 bit
+short 16 bit
+int   32 bit
+long  64 bit
+char  16 bit（UTF-16 码元，不是字节）
+float 32 bit / double 64 bit
+--- 溢出：静默回绕，不抛异常 ---
+Integer.MAX_VALUE     = 2147483647
+MAX_VALUE + 1         = -2147483648
+MAX_VALUE * 2         = -2
+Integer.MIN_VALUE - 1 = 2147483647
+Math.addExact 同运算   -> ArithmeticException: integer overflow
+--- 整数除法截断与除零 ---
+-7 / 2  = -3   （向零截断，不是向下取整）
+-7 % 2  = -1
+7 / 0   -> ArithmeticException: / by zero（整数除零抛异常，不是未定义行为）
+7.0 / 0 = Infinity   （浮点除零得 Infinity）
+--- char 不是字节：中文与 emoji ---
+'中' 的 char 数（length）= 1，码点数 = 1
+'😀' 的 char 数（length）= 2，码点数 = 1  （一个 char 装不下 -> 代理对）
+按字节数 UTF-8 编码：'中' = 3 字节，'😀' = 4 字节
+--- 自动装箱与缓存（== 比较的经典陷阱）---
+Integer 127 == 127 -> true（缓存 -128..127）
+Integer 128 == 128 -> false（超出缓存，两个对象）
+Integer 128 equals 128 -> true
+--- 浮点：不要用 == 比小数 ---
+0.1 + 0.2        = 0.30000000000000004
+0.1 + 0.2 == 0.3 -> false
+BigDecimal       = 0.3
+--- 局部变量类型推断 var（Java 10+）---
+var list = List.of(1,2,3) -> java.util.ImmutableCollections$ListN [1, 2, 3]
+
+########## ProbeOop ##########
+--- 记录类：自动得到 equals/hashCode/toString/访问器 ---
+p1 = Point[x=3, y=4]
+p1.equals(p2) = true（值语义，不用自己写）
+p1.x() = 3（访问器不是 getX()）
+是 final 类吗 = true
+--- 密封接口 + switch 模式匹配：穷尽性由编译器检查 ---
+Circle[r=1.0]          面积 = 3.1416
+Square[a=2.0]          面积 = 4.0000
+--- equals/hashCode 契约：只改一半会出什么事 ---
+contains(等值新对象) = false（equals 说相等，但 HashSet 按 hashCode 找，找不到）
+--- 枚举：可以带字段与方法，switch 也是穷尽的 ---
+LOW   ordinal=0 name()=LOW
+MID   ordinal=1 name()=MID
+HIGH  ordinal=2 name()=HIGH
+valueOf("MID") = MID
+--- 初始化顺序：静态 -> 实例 -> 构造体 ---
+1 静态初始化块
+  2 实例初始化块
+  3 构造体
+--- 接口默认方法：不破坏已有实现地加方法 ---
+hello from default method
+--- Stream：声明式流水线，本身不改变原集合 ---
+原集合        = [5, 1, 4, 2, 3]
+sorted+map    = [10, 20, 30, 40, 50]
+原集合仍然    = [5, 1, 4, 2, 3]（不可变）
+过滤求和      = 9
+分组          = {偶=[4, 2], 奇=[5, 1, 3]}
+
+########## ProbeCollections ##########
+--- 同一条声明，换实现类改变的是性能不是语义 ---
+ArrayList   = java.util.ArrayList
+LinkedList  = java.util.LinkedList
+链表随机访问 get(1) 很慢（要走到第 1 个节点）
+--- 遍历时修改集合：fail-fast 只在"下一次 next()"时才检查 ---
+删开头元素 -> ConcurrentModificationException（下次 next() 比对 modCount 发现）
+删倒数第二个 -> 没抛异常，y = [a, c]  ← 循环恰好结束，检查根本没执行（fail-fast 会漏检）
+正确写法 iterator.remove()：[c, b] 集合 = [c, b]
+或 removeIf：[c, b]
+--- List.of / Map.of 是不可变的，不是"可改的只读视图" ---
+List.of(...).add -> UnsupportedOperationException
+--- HashMap：无序不是"随便"，是哈希与容量决定 ---
+HashMap 遍历 = [banana, apple, cherry]
+TreeMap 遍历 = [apple, banana, cherry]（按键排序）
+LinkedHashMap = [banana, apple, cherry]（按插入顺序）
+--- hashCode 全冲突时会发生什么（只会变慢，不会算错）---
+放 20000 个 hashCode 全相同的键：size=20000，耗时 1186 ms（正常应是毫秒级以下）
+--- 泛型：编译期检查 + 类型擦除 ---
+List<String>.getClass() = java.util.ArrayList（运行时看不到 <String>）
+List<String> 与 List<Integer> 的 getClass() 相等 = true
+--- 常用收尾：Map.merge / computeIfAbsent ---
+computeIfAbsent 累加 = {奇数=[1, 3]}
+getOrDefault = -1
+
+########## ProbeConcurrent ##########
+--- 竞态：同一个计数器，加锁与不加锁 ---
+i++ (无同步)        第1轮 期望 200000，实测 54188
+i++ (无同步)        第2轮 期望 200000，实测 55228
+AtomicInteger    第1轮 期望 200000，实测 200000
+AtomicInteger    第2轮 期望 200000，实测 200000
+两者本轮观测：200000 次递增，无同步版几乎总是小于 200000
+--- 虚拟线程：平台线程做不到的规模 ---
+虚拟线程 50000 个任务全部 join：sum=50000，耗时 99 ms
+虚拟线程实现类 = java.lang.VirtualThread
+--- CompletableFuture：回调式组合 ---
+结果 42
+--- 线程安全的集合选择 ---
+ConcurrentHashMap.merge 两次 = {a=2}（普通 HashMap 并发 put 会丢更新）
+
+########## ProbeEncoding ##########
+file.encoding      = UTF-8
+native.encoding    = GBK
+stdout.encoding    = UTF-8
+默认 Charset        = UTF-8
+直接打印中文测试：你好，Java
+s.length()（char 数）= 7（2 个汉字 + 1 个全角逗号 + 4 个 ASCII 字母 = 7 个 char）
+s 的 UTF-8 字节数 = 13（3+3+3+4 = 13 字节；char 数与字节数不是一个数）
+--- 同一段内容（含 1 行中文 + 1 行 ASCII），显式 UTF-8 读写 ---
+读回：第一行：中文\nsecond line\n
+UTF-8 字节数 = 31（中文 12 字节 + 全角冒号 3 字节 + ASCII 与换行 16 字节）
+同一段内容用 GBK 写，字节数 = 25（中文 8 字节 + 全角冒号 2 字节 + ASCII 与换行 16 字节；ASCII 部分两种编码完全一样）
+读失败：MalformedInputException
+
+########## ProbeExtra ##########
+String.class.getClassLoader()            = null
+本探针的类加载器                                 = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+系统类加载器                                   = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+平台类加载器（旧名扩展）                             = jdk.internal.loader.ClassLoaders$PlatformClassLoader@8bcc55f
+ForkJoinPool.commonPool().getParallelism() = 7
+availableProcessors                      = 8
+maxMemory                                = 8120 MiB
+Object 是不是所有类的父类                         = true
+一个普通对象的类                                 = class java.lang.Object
+系统模块总数（ModuleFinder，等于 java --list-modules 的行数） = 70
+引导层已加载模块数（ModuleLayer.boot）              = 62
+java.class.version                       = 69.0
+Runtime.version()                        = 25.0.4.1+1-LTS

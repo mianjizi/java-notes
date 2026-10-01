@@ -1,0 +1,362 @@
+
+==================================================================
+=== 【深度靶场批次】2026-10-01 20:57:35  JDK: openjdk version "25.0.4.1" 2026-08-18 LTS
+=== 四个实验：运行期附加 / 进程内改字节码 / 过滤器进阶 / JNDI 解码路径
+=== 提醒：只在本机自建靶子上跑，HTTP 只绑 127.0.0.1；不下载、不落地、不对外
+==================================================================
+
+########## 实验 1：运行期附加（目标 JVM 不重启） ##########
+-- 目标 pid=22764；它启动时**没有**任何 agent 参数 --
+    [附加方] 当前能看到的 Java 进程：
+        pid=17948  SecAttach 22764 <用户目录>\AppData\Local/Temp/javasec2/agent/attach-agent.jar <用户目录>\AppData\Local/Temp/javasec2/patch/VictimA.class
+        pid=22764  VictimA 26
+    [附加方] 试着连上 pid=22764 …
+    [附加方] 已连上（读到了目标的 java.version = 25.0.4.1）
+    [附加方] 把 agent 塞进目标：loadAgent(jar, options)
+    [附加方] loadAgent 返回 —— 目标那边已经执行完 agentmain
+    [附加方] 已断开（detach）；目标进程照旧在跑
+-- 附加之后，目标的启动参数（jcmd VM.command_line）--
+22764:
+VM Arguments:
+jvm_args: -Dstdout.encoding=UTF-8 -Dstderr.encoding=UTF-8 -XX:StartFlightRecording=filename=<用户目录>\AppData\Local/Temp/javasec2/target.jfr,duration=40s 
+java_command: VictimA 26
+java_class_path (initial): <用户目录>\AppData\Local/Temp/javasec2/classes
+Launcher Type: SUN_STANDARD
+-- 附加之后，进程里的类加载器（jcmd VM.class_loaders，前 8 行）--
+22764:
+java.lang.IllegalArgumentException: Unknown diagnostic command
+-- 目标的完整输出（status() 从第几次开始变，就是植入发生的时刻）--
+[0.373s][info][jfr,startup] Started recording 1. The result will be written to:
+[0.373s][info][jfr,startup] 
+[0.373s][info][jfr,startup] <用户目录>\AppData\Local\Temp\javasec2\target.jfr
+    [目标] pid = 22764（每 0.5 秒打印一次 status()，共 26 次）
+    [目标] 第01次 status() = 磁盘上的原始实现（字节码未被改动）
+    [目标] 第02次 status() = 磁盘上的原始实现（字节码未被改动）
+    [目标] 第03次 status() = 磁盘上的原始实现（字节码未被改动）
+    [目标] 第04次 status() = 磁盘上的原始实现（字节码未被改动）
+    [目标] 第05次 status() = 磁盘上的原始实现（字节码未被改动）
+    [目标] 第06次 status() = 磁盘上的原始实现（字节码未被改动）
+WARNING: A Java agent has been loaded dynamically (<用户目录>\AppData\Local\Temp\javasec2\agent\attach-agent.jar)
+WARNING: If a serviceability tool is in use, please run with -XX:+EnableDynamicAgentLoading to hide this warning
+WARNING: If a serviceability tool is not in use, please run with -Djdk.instrument.traceUsage for more information
+WARNING: Dynamic loading of agents will be disallowed by default in a future release
+    [attach-agent] agentmain 已执行 —— 目标 JVM 没有重启
+    [attach-agent] options（由 attach 方传入）= <用户目录>\AppData\Local/Temp/javasec2/patch/VictimA.class
+    [attach-agent] 能重定义已加载的类吗？true
+    [attach-agent] 补丁字节数 = 1897，目标类 = class VictimA
+    [attach-agent] 该类可被重定义吗？true
+    [attach-agent] redefineClasses 完成 —— 磁盘上的 VictimA.class 没被碰过
+    [目标] 第07次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第08次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第09次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第10次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第11次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第12次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第13次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第14次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第15次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第16次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第17次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第18次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第19次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第20次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第21次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第22次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第23次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第24次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第25次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 第26次 status() = 补丁实现（来自另一份编译产物，经外部进程 loadAgent 换上去）
+    [目标] 循环结束，用时 13203 ms
+-- JFR：jdk.JavaAgent 事件（dynamic 字段 = 启动期 false / 运行期 true）--
+jdk.JavaAgent {
+  startTime = 20:57:49.755 (2026-10-01)
+  name = "<用户目录>\AppData\Local/Temp/javasec2/agent/attach-agent.jar"
+  options = "<用户目录>\AppData\Local/Temp/javasec2/patch/VictimA.class"
+  dynamic = true
+  initializationTime = 20:57:39.384 (2026-10-01)
+  initializationDuration = 12.0 ms
+}
+
+-- JFR：相关事件计数 --
+ jdk.ClassRedefinition                       1            11
+ jdk.JavaAgent                               1           148
+ jdk.RedefineClasses                         1            15
+ jdk.ClassDefine                             0             0
+ jdk.NativeAgent                             0             0
+
+########## 实验 2：进程内改字节码（Class-File API / JEP 484） ##########
+-- 对照：不带 agent 跑 4 次 --
+    [目标] pid = 13416（每 0.5 秒打印一次 status()，共 4 次）
+    [目标] 第01次 status() = 磁盘上的原始实现（字节码未被改动）
+    [目标] 第02次 status() = 磁盘上的原始实现（字节码未被改动）
+    [目标] 第03次 status() = 磁盘上的原始实现（字节码未被改动）
+    [目标] 第04次 status() = 磁盘上的原始实现（字节码未被改动）
+    [目标] 循环结束，用时 2025 ms
+-- 带 -javaagent：premain 里读**磁盘上原类的字节** → 改写 status() 方法体 → redefineClasses --
+    [rewrite-agent/premain] 拿到 Instrumentation（重定义支持 = true）
+    [rewrite-agent] 原字节数 = 1865，改写后字节数 = 1879，两份不同吗？true
+    [rewrite-agent] 改写后的 status() 代码属性 = [LoadConstant[OP=LDC, val=被 Class-File API 在进程内改写的实现（磁盘上没有这份字节）], Return[OP=ARETURN]]
+    [rewrite-agent] 目标类 = class VictimA，可重定义吗？true
+    [rewrite-agent] redefineClasses 完成 —— 磁盘上的 VictimA.class 一个字节没动
+    [目标] pid = 11492（每 0.5 秒打印一次 status()，共 4 次）
+    [目标] 第01次 status() = 被 Class-File API 在进程内改写的实现（磁盘上没有这份字节）
+    [目标] 第02次 status() = 被 Class-File API 在进程内改写的实现（磁盘上没有这份字节）
+    [目标] 第03次 status() = 被 Class-File API 在进程内改写的实现（磁盘上没有这份字节）
+    [目标] 第04次 status() = 被 Class-File API 在进程内改写的实现（磁盘上没有这份字节）
+    [目标] 循环结束，用时 2018 ms
+-- 磁盘上那两份 class 的 md5（原类与补丁类；运行前后都不应变化）--
+394a0dd51672c873d221d7c86ccb0e8f *VictimA.class
+3f87630343d3feb3c9256eff219702bf *VictimA.class
+
+########## 实验 3：反序列化过滤器进阶 ##########
+=== 1) 先看几个字符串模式解析成什么（不装到进程上）===
+    模式 java.base/*;!*
+        → 解析出的过滤器 = java.base/*;!*
+    模式 !SecFilterAdv$Node;java.base/*;!*
+        → 解析出的过滤器 = !SecFilterAdv$Node;java.base/*;!*
+    模式 maxdepth=3;*
+        → 解析出的过滤器 = maxdepth=3;*
+    模式 maxrefs=2;*
+        → 解析出的过滤器 = maxrefs=2;*
+    模式 maxarray=4;*
+        → 解析出的过滤器 = maxarray=4;*
+    模式 [Ljava.lang.String;;java.base/*;!*
+        → 解析出的过滤器 = [Ljava.lang.String;;java.base/*;!*
+    模式 [I;java.base/*;!*
+        → 解析出的过滤器 = [I;java.base/*;!*
+
+=== 2) maxdepth：拦的是「嵌套多深」，不是「哪个类」===
+    链长 2（字节数 86） —— 过滤器 [maxdepth=4;*] → 读成功（Node）
+    链长 6（字节数 126） —— 过滤器 [maxdepth=4;*] → 拦下：InvalidClassException: filter status: REJECTED
+
+=== 3) maxrefs：拦的是「一次读里有多少个引用」===
+    List 里 30 个 Pair（字节数 640） —— 过滤器 [maxrefs=8;java.base/*;*] → 拦下：InvalidClassException: filter status: REJECTED
+
+=== 4) 数组模式与 maxarray ===
+    String[20] 的数组 —— 过滤器 [maxarray=8;java.base/*;*] → 拦下：InvalidClassException: filter status: REJECTED
+    String[20] 的数组（显式拒绝数组模式） —— 过滤器 [![Ljava.lang.String;;java.base/*;!*] → 读成功（String[]）
+
+=== 5) 进程级过滤器只能设一次 ===
+    第一次 setSerialFilter：成功
+    第二次 setSerialFilter 抛：java.lang.IllegalStateException: Serial filter can only be set once
+    现在进程级过滤器 = java.base/*;!*
+
+=== 6) 进程级过滤器设上之后，流级还能不能覆盖它 ===
+    流级全放行 → 读成功：Pair
+    不设流级 → 被进程级拦下：InvalidClassException: filter status: REJECTED
+
+    === 7) 数组类名在过滤器里怎么写（String[20] 与 int[20] 各试一遍）===
+        模式 [java.base/*;!*]
+            → String[20]：读成功（[Ljava.lang.String;）
+            → int[20]   ：读成功（[I）
+        模式 [maxarray=8;*]
+            → String[20]：拦下：InvalidClassException: filter status: REJECTED
+            → int[20]   ：拦下：InvalidClassException: filter status: REJECTED
+        模式 [!java.lang.String;java.base/*;!*]
+            → String[20]：拦下：InvalidClassException: filter status: REJECTED
+            → int[20]   ：读成功（[I）
+        模式 [[;java.base/*;!*]
+            → String[20]：读成功（[Ljava.lang.String;）
+            → int[20]   ：读成功（[I）
+        模式 [![;java.base/*;!*]
+            → String[20]：读成功（[Ljava.lang.String;）
+            → int[20]   ：读成功（[I）
+        模式 [[Ljava.lang.String;;java.base/*;!*]
+            → String[20]：读成功（[Ljava.lang.String;）
+            → int[20]   ：读成功（[I）
+        模式 [![Ljava.lang.String;;java.base/*;!*]
+            → String[20]：读成功（[Ljava.lang.String;）
+            → int[20]   ：读成功（[I）
+        模式 [[I;java.base/*;!*]
+            → String[20]：读成功（[Ljava.lang.String;）
+            → int[20]   ：读成功（[I）
+        模式 [![I;java.base/*;!*]
+            → String[20]：读成功（[Ljava.lang.String;）
+            → int[20]   ：读成功（[I）
+
+    === 8) 解析器把这些串拆成了什么（看出分隔规则）===
+        模式 [java.base/*;!*] → 解析出的过滤器 = java.base/*;!*
+        模式 [maxarray=8;*] → 解析出的过滤器 = maxarray=8;*
+        模式 [!java.lang.String;java.base/*;!*] → 解析出的过滤器 = !java.lang.String;java.base/*;!*
+        模式 [[;java.base/*;!*] → 解析出的过滤器 = [;java.base/*;!*
+        模式 [![;java.base/*;!*] → 解析出的过滤器 = ![;java.base/*;!*
+        模式 [[Ljava.lang.String;;java.base/*;!*] → 解析出的过滤器 = [Ljava.lang.String;;java.base/*;!*
+        模式 [![Ljava.lang.String;;java.base/*;!*] → 解析出的过滤器 = ![Ljava.lang.String;;java.base/*;!*
+        模式 [[I;java.base/*;!*] → 解析出的过滤器 = [I;java.base/*;!*
+        模式 [![I;java.base/*;!*] → 解析出的过滤器 = ![I;java.base/*;!*
+
+    === 9) 单个类名模式的「第一个命中生效」验证 ===
+        [!java.lang.String;java.base/*] 读 String[20] → 拦下：InvalidClassException: filter status: REJECTED
+        [java.base/*;!java.lang.String] 读 String[20] → 读成功（[Ljava.lang.String;）
+
+########## 实验 4：JNDI —— 走到 Reference 解码那一步 ##########
+-- 模式 A：不带 --add-exports --
+    [模式] --add-exports 生效吗（能构造内部 ReferenceWrapper 吗）？见下面第 2 步
+    === 1) 本地 codebase 服务与信任开关 ===
+        codebase = http://127.0.0.1:59732/（只绑 127.0.0.1，只统计请求）
+        目录里有：EvilFactory.class
+        com.sun.jndi.rmi.object.trustURLCodebase = (未设置 → 用 JVM 内置默认)
+        com.sun.jndi.ldap.object.trustURLCodebase = (未设置 → 用 JVM 内置默认)
+
+    === 2) 关键一步：那条经典链的「构造工具」是 JDK 内部类 ===
+        Reference: className=EvilObject，factory=EvilFactory，factoryLocation=http://127.0.0.1:59732/
+        构造失败：java.lang.IllegalAccessException: class SecJndi2 cannot access class com.sun.jndi.rmi.registry.ReferenceWrapper (in module jdk.naming.rmi) because module jdk.naming.rmi does not export com.sun.jndi.rmi.registry to unnamed module @45fe3ee3
+        （模块封装把这条老路的构造工具关在未导出的包里；要复现必须显式 --add-exports，这本身就是一条读数）
+
+    === 3) 走通用路径（NamingManager）做对照 ===
+        返回：javax.naming.Reference（就是那个 Reference 本身吗？true）
+        此时 HTTP 收到的请求数 = 0 []
+
+    === 4) 绑到 RMI registry 上再 lookup（真正的解码路径）===
+        跳过：第 2 步没能构造出内部包装类
+
+    === 5) 结论读数 ===
+        HTTP 总请求数 = 0，路径 = []
+        → 本机这一次：JVM 没有去远端取工厂类（0 次请求）
+-- 模式 B0：模块名写错（java.naming）—— 报错信息本身会指出正确的模块 --
+    [模式] --add-exports 生效吗（能构造内部 ReferenceWrapper 吗）？见下面第 2 步
+    === 1) 本地 codebase 服务与信任开关 ===
+        codebase = http://127.0.0.1:59733/（只绑 127.0.0.1，只统计请求）
+        目录里有：EvilFactory.class
+        com.sun.jndi.rmi.object.trustURLCodebase = (未设置 → 用 JVM 内置默认)
+        com.sun.jndi.ldap.object.trustURLCodebase = (未设置 → 用 JVM 内置默认)
+
+    === 2) 关键一步：那条经典链的「构造工具」是 JDK 内部类 ===
+        Reference: className=EvilObject，factory=EvilFactory，factoryLocation=http://127.0.0.1:59733/
+        构造失败：java.lang.IllegalAccessException: class SecJndi2 cannot access class com.sun.jndi.rmi.registry.ReferenceWrapper (in module jdk.naming.rmi) because module jdk.naming.rmi does not export com.sun.jndi.rmi.registry to unnamed module @2d363fb3
+        （模块封装把这条老路的构造工具关在未导出的包里；要复现必须显式 --add-exports，这本身就是一条读数）
+
+    === 3) 走通用路径（NamingManager）做对照 ===
+        返回：javax.naming.Reference（就是那个 Reference 本身吗？true）
+        此时 HTTP 收到的请求数 = 0 []
+
+    === 4) 绑到 RMI registry 上再 lookup（真正的解码路径）===
+        跳过：第 2 步没能构造出内部包装类
+
+    === 5) 结论读数 ===
+        HTTP 总请求数 = 0，路径 = []
+        → 本机这一次：JVM 没有去远端取工厂类（0 次请求）
+-- 模式 B：模块名写对（jdk.naming.rmi）--
+    [模式] --add-exports 生效吗（能构造内部 ReferenceWrapper 吗）？见下面第 2 步
+    === 1) 本地 codebase 服务与信任开关 ===
+        codebase = http://127.0.0.1:61866/（只绑 127.0.0.1，只统计请求）
+        目录里有：EvilFactory.class
+        com.sun.jndi.rmi.object.trustURLCodebase = (未设置 → 用 JVM 内置默认)
+        com.sun.jndi.ldap.object.trustURLCodebase = (未设置 → 用 JVM 内置默认)
+
+    === 2) 关键一步：那条经典链的「构造工具」是 JDK 内部类 ===
+        Reference: className=EvilObject，factory=EvilFactory，factoryLocation=http://127.0.0.1:61866/
+        构造成功：com.sun.jndi.rmi.registry.ReferenceWrapper（说明本次 --add-exports 生效）
+
+    === 3) 走通用路径（NamingManager）做对照 ===
+        返回：javax.naming.Reference（就是那个 Reference 本身吗？true）
+        此时 HTTP 收到的请求数 = 0 []
+
+    === 4) 绑到 RMI registry 上再 lookup（真正的解码路径）===
+        已绑到 rmi://127.0.0.1:2359/evil
+        lookup 抛：javax.naming.ConfigurationException: Remote object factories are not supported
+        此时 HTTP 收到的请求数 = 0 []
+
+    === 5) 结论读数 ===
+        HTTP 总请求数 = 0，路径 = []
+        → 本机这一次：JVM 没有去远端取工厂类（0 次请求）
+-- 模式 C：模式 B 再加 -Dcom.sun.jndi.rmi.object.trustURLCodebase=true（老属性，已不被这条路读取）--
+    [模式] --add-exports 生效吗（能构造内部 ReferenceWrapper 吗）？见下面第 2 步
+    === 1) 本地 codebase 服务与信任开关 ===
+        codebase = http://127.0.0.1:49675/（只绑 127.0.0.1，只统计请求）
+        目录里有：EvilFactory.class
+        com.sun.jndi.rmi.object.trustURLCodebase = true
+        com.sun.jndi.ldap.object.trustURLCodebase = (未设置 → 用 JVM 内置默认)
+
+    === 2) 关键一步：那条经典链的「构造工具」是 JDK 内部类 ===
+        Reference: className=EvilObject，factory=EvilFactory，factoryLocation=http://127.0.0.1:49675/
+        构造成功：com.sun.jndi.rmi.registry.ReferenceWrapper（说明本次 --add-exports 生效）
+
+    === 3) 走通用路径（NamingManager）做对照 ===
+        返回：javax.naming.Reference（就是那个 Reference 本身吗？true）
+        此时 HTTP 收到的请求数 = 0 []
+
+    === 4) 绑到 RMI registry 上再 lookup（真正的解码路径）===
+        已绑到 rmi://127.0.0.1:2311/evil
+        lookup 抛：javax.naming.ConfigurationException: Remote object factories are not supported
+        此时 HTTP 收到的请求数 = 0 []
+
+    === 5) 结论读数 ===
+        HTTP 总请求数 = 0，路径 = []
+        → 本机这一次：JVM 没有去远端取工厂类（0 次请求）
+
+-- 模式 D：注册 ObjectFactoryBuilder 之后走 predicate 那条路（默认 filter）--
+    === 1) 这一版 JDK 用的属性（不是老那套）===
+        jdk.jndi.object.factoriesFilter = (未设置)
+        jdk.jndi.rmi.object.factoriesFilter = (未设置)
+        jdk.jndi.ldap.object.factoriesFilter = (未设置)
+        com.sun.jndi.rmi.object.trustURLCodebase = (未设置)
+        codebase = http://127.0.0.1:49682/（只绑 127.0.0.1，只统计请求）
+        （注意：NamingManager.getObjectFactoryBuilder() 在本版 JDK 不是公共 API，查不到它有没有被设置 —— 只能从行为上观察，见下面两次 lookup 的差别）
+
+    === 2) 第一次 lookup：默认配置（没有 ObjectFactoryBuilder）===
+        [第一次] 已绑 rmi://127.0.0.1:2896/evil，开始 lookup …
+        [第一次] lookup 抛：javax.naming.ConfigurationException: Remote object factories are not supported
+        [第一次] 此刻 HTTP 请求数 = 0
+
+    === 3) 注册一个「返回 null」的 ObjectFactoryBuilder（容器就常干这事）===
+        已注册（返回 null 表示不自己造工厂，交回 NamingManager 按 predicate 去找）
+    === 4) 第二次 lookup：走 predicate 那条路 ===
+        [第二次] 已绑 rmi://127.0.0.1:2568/evil，开始 lookup …
+        [第二次] lookup 抛：javax.naming.NamingException: (无消息)
+        [第二次]   ↳ 原因：java.lang.NullPointerException: Cannot invoke "javax.naming.spi.ObjectFactory.getObjectInstance(Object, javax.naming.Name, javax.naming.Context, java.util.Hashtable)" because "factory" is null
+        [第二次] 此刻 HTTP 请求数 = 0
+
+    === 5) 读数 ===
+        HTTP 请求总数 = 0
+        → 这一档配置下，JVM 没有去远端取工厂类
+-- 模式 E：模式 D 再显式把 RMI 的工厂过滤器放开成 *（等于自己拆掉那道闸）--
+    === 1) 这一版 JDK 用的属性（不是老那套）===
+        jdk.jndi.object.factoriesFilter = (未设置)
+        jdk.jndi.rmi.object.factoriesFilter = *
+        jdk.jndi.ldap.object.factoriesFilter = (未设置)
+        com.sun.jndi.rmi.object.trustURLCodebase = (未设置)
+        codebase = http://127.0.0.1:49688/（只绑 127.0.0.1，只统计请求）
+        （注意：NamingManager.getObjectFactoryBuilder() 在本版 JDK 不是公共 API，查不到它有没有被设置 —— 只能从行为上观察，见下面两次 lookup 的差别）
+
+    === 2) 第一次 lookup：默认配置（没有 ObjectFactoryBuilder）===
+        [第一次] 已绑 rmi://127.0.0.1:2675/evil，开始 lookup …
+        [第一次] lookup 抛：javax.naming.ConfigurationException: Remote object factories are not supported
+        [第一次] 此刻 HTTP 请求数 = 0
+
+    === 3) 注册一个「返回 null」的 ObjectFactoryBuilder（容器就常干这事）===
+        已注册（返回 null 表示不自己造工厂，交回 NamingManager 按 predicate 去找）
+    === 4) 第二次 lookup：走 predicate 那条路 ===
+        [第二次] 已绑 rmi://127.0.0.1:2790/evil，开始 lookup …
+        [第二次] lookup 抛：javax.naming.NamingException: (无消息)
+        [第二次]   ↳ 原因：java.lang.NullPointerException: Cannot invoke "javax.naming.spi.ObjectFactory.getObjectInstance(Object, javax.naming.Name, javax.naming.Context, java.util.Hashtable)" because "factory" is null
+        [第二次] 此刻 HTTP 请求数 = 0
+
+    === 5) 读数 ===
+        HTTP 请求总数 = 0
+        → 这一档配置下，JVM 没有去远端取工厂类
+-- 模式 F：模式 E 再放开全局那个（jdk.jndi.object.factoriesFilter）--
+    === 1) 这一版 JDK 用的属性（不是老那套）===
+        jdk.jndi.object.factoriesFilter = *
+        jdk.jndi.rmi.object.factoriesFilter = *
+        jdk.jndi.ldap.object.factoriesFilter = (未设置)
+        com.sun.jndi.rmi.object.trustURLCodebase = (未设置)
+        codebase = http://127.0.0.1:49693/（只绑 127.0.0.1，只统计请求）
+        （注意：NamingManager.getObjectFactoryBuilder() 在本版 JDK 不是公共 API，查不到它有没有被设置 —— 只能从行为上观察，见下面两次 lookup 的差别）
+
+    === 2) 第一次 lookup：默认配置（没有 ObjectFactoryBuilder）===
+        [第一次] 已绑 rmi://127.0.0.1:2578/evil，开始 lookup …
+        [第一次] lookup 抛：javax.naming.ConfigurationException: Remote object factories are not supported
+        [第一次] 此刻 HTTP 请求数 = 0
+
+    === 3) 注册一个「返回 null」的 ObjectFactoryBuilder（容器就常干这事）===
+        已注册（返回 null 表示不自己造工厂，交回 NamingManager 按 predicate 去找）
+    === 4) 第二次 lookup：走 predicate 那条路 ===
+        [第二次] 已绑 rmi://127.0.0.1:2893/evil，开始 lookup …
+        [第二次] lookup 抛：javax.naming.NamingException: (无消息)
+        [第二次]   ↳ 原因：java.lang.NullPointerException: Cannot invoke "javax.naming.spi.ObjectFactory.getObjectInstance(Object, javax.naming.Name, javax.naming.Context, java.util.Hashtable)" because "factory" is null
+        [第二次] 此刻 HTTP 请求数 = 0
+
+    === 5) 读数 ===
+        HTTP 请求总数 = 0
+        → 这一档配置下，JVM 没有去远端取工厂类

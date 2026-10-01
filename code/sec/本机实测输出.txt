@@ -1,0 +1,571 @@
+
+================================================================
+=== 本次运行：2026-10-01 20:17:43  JDK: openjdk version "25.0.4.1" 2026-08-18 LTS  （日志追加写入）
+=== 提醒：本目录所有程序只在本地自建靶子上运行，不下载、不落地、不对外
+================================================================
+
+########## SecBoundary（本机 JDK 25 安全画像） ##########
+java.version                                   = 25.0.4.1
+java.vendor                                    = Eclipse Adoptium
+--- Security Manager（沙箱时代的遗产）---
+System.getSecurityManager()                    = null
+System.setSecurityManager(null) 抛              = java.lang.UnsupportedOperationException: Setting a Security Manager is not supported
+--- JNDI 远程 codebase（Log4Shell 的关键开关）---
+com.sun.jndi.ldap.object.trustURLCodebase      = (未设置 → 用 JVM 内置默认)
+com.sun.jndi.rmi.object.trustURLCodebase       = (未设置 → 用 JVM 内置默认)
+com.sun.jndi.ldap.object.trustSerialData       = (未设置 → 用 JVM 内置默认)
+--- 反序列化（JEP 290 过滤器）---
+jdk.serialFilter                               = (未设置 → 用 JVM 内置默认)
+--- 脚本引擎（JEP 335 移除 Nashorn 之后）---
+可用脚本引擎数                                        = 0
+--- 模块强封装（JEP 403：JDK 17 起不再允许松动）---
+sun.misc.Unsafe                                = 反射拿到实例：sun.misc.Unsafe@4b67cf4d
+jdk.internal.misc.Unsafe                       = InaccessibleObjectException: Unable to make field private static final jdk.internal.misc.Unsafe jdk.internal.misc.Unsafe.theUnsafe accessible: module java.base does not "opens jdk.internal.misc" to unnamed module @7ea987ac
+jdk.internal.access.SharedSecrets              = 类可加载：class jdk.internal.access.SharedSecrets
+反射改 String.value                               = InaccessibleObjectException: Unable to make field private final byte[] java.lang.String.value accessible: module java.base does not "opens java.lang" to unnamed module @7ea987ac
+--- 常见攻击面 API 的存在性 ---
+java.io.ObjectInputStream                      = 存在
+javax.naming.InitialContext                    = 存在
+java.lang.instrument.Instrumentation           = 存在
+java.lang.reflect.Proxy                        = 存在
+javax.xml.parsers.DocumentBuilderFactory       = 存在
+jdk.jfr.Recording                              = 存在
+
+########## SecBoundary（对照：用 --add-opens 松动模块封装后再跑一次） ##########
+WARNING: package sun.misc not in java.base
+java.version                                   = 25.0.4.1
+java.vendor                                    = Eclipse Adoptium
+--- Security Manager（沙箱时代的遗产）---
+System.getSecurityManager()                    = null
+System.setSecurityManager(null) 抛              = java.lang.UnsupportedOperationException: Setting a Security Manager is not supported
+--- JNDI 远程 codebase（Log4Shell 的关键开关）---
+com.sun.jndi.ldap.object.trustURLCodebase      = (未设置 → 用 JVM 内置默认)
+com.sun.jndi.rmi.object.trustURLCodebase       = (未设置 → 用 JVM 内置默认)
+com.sun.jndi.ldap.object.trustSerialData       = (未设置 → 用 JVM 内置默认)
+--- 反序列化（JEP 290 过滤器）---
+jdk.serialFilter                               = (未设置 → 用 JVM 内置默认)
+--- 脚本引擎（JEP 335 移除 Nashorn 之后）---
+可用脚本引擎数                                        = 0
+--- 模块强封装（JEP 403：JDK 17 起不再允许松动）---
+sun.misc.Unsafe                                = 反射拿到实例：sun.misc.Unsafe@3a71f4dd
+jdk.internal.misc.Unsafe                       = 反射拿到实例：jdk.internal.misc.Unsafe@85ede7b
+jdk.internal.access.SharedSecrets              = 类可加载：class jdk.internal.access.SharedSecrets
+反射改 String.value                               = 可访问（未强封装）
+--- 常见攻击面 API 的存在性 ---
+java.io.ObjectInputStream                      = 存在
+javax.naming.InitialContext                    = 存在
+java.lang.instrument.Instrumentation           = 存在
+java.lang.reflect.Proxy                        = 存在
+javax.xml.parsers.DocumentBuilderFactory       = 存在
+jdk.jfr.Recording                              = 存在
+
+########## SecDeserBasic（反序列化会执行代码：最小复现） ##########
+=== 一、只用 readObject 钩子：读一个对象就触发了副作用 ===
+  序列化后字节数 = 79，现在开始反序列化（下面只记反序列化阶段的调用）：
+      >> [副作用触发 #1] readObject 钩子（类=WithHook, tag=原值）
+  读回的对象 = WithHook，副作用触发次数 = 1
+
+=== 二、容器在重建结构时会主动调用元素的方法（真实 gadget 链的内核）===
+  (a) PriorityQueue：元素之间需要比较才重建堆，所以 1 个元素时不会调用
+      元素 1 个 → 反序列化时 compareTo 被调用 0 次
+      >> [副作用触发 #1] compareTo（PriorityQueue 重建堆时调用）
+      元素 2 个 → 反序列化时 compareTo 被调用 1 次
+      >> [副作用触发 #1] compareTo（PriorityQueue 重建堆时调用）
+      >> [副作用触发 #2] compareTo（PriorityQueue 重建堆时调用）
+      >> [副作用触发 #3] compareTo（PriorityQueue 重建堆时调用）
+      元素 4 个 → 反序列化时 compareTo 被调用 3 次
+  (b) HashMap：重建哈希表要算键的位置，冲突还要判等
+      >> [副作用触发 #1] hashCode（HashMap 重建哈希表时调用）
+      键 1 个 → 反序列化时 hashCode+equals 共被调用 1 次
+      >> [副作用触发 #1] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #2] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #3] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #4] hashCode（HashMap 重建哈希表时调用）
+      键 4 个 → 反序列化时 hashCode+equals 共被调用 4 次
+      >> [副作用触发 #1] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #2] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #3] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #4] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #5] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #6] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #7] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #8] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #9] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #10] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #11] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #12] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #13] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #14] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #15] hashCode（HashMap 重建哈希表时调用）
+      >> [副作用触发 #16] hashCode（HashMap 重建哈希表时调用）
+      键 16 个 → 反序列化时 hashCode+equals 共被调用 16 次
+
+=== 三、结论 ===
+  不是「反序列化会执行魔法」，而是：readObject 钩子 + 容器重建结构时的回调，
+  把「你写的/框架里本来就有的危险方法」串起来执行了。入口只要一个不可信的字节流。
+
+########## SecDeserFilter（无进程级过滤器） ##########
+载荷字节数 = 45
+
+=== 1) 不加任何过滤器：载荷自由执行 ===
+    >> [副作用触发] Dangerous.readObject（真实世界这一段会调 Runtime.exec / JNDI lookup）
+    结果：反序列化成功，副作用触发 1 次 ← 这就是被利用了
+
+=== 2) 流级过滤器：只放行自己认识的类（白名单思路）===
+    过滤器看到类 SecDeserFilter$Dangerous → 拒绝
+    结果：抛 InvalidClassException -> filter status: REJECTED
+    副作用触发次数 = 0（0 就是拦住了）
+
+=== 3) 进程级过滤器（-Djdk.serialFilter）：启动参数就能兜底 ===
+    本进程生效的全局过滤器 = null
+    （本次运行没设 jdk.serialFilter —— run.sh 里另有一次带参数的运行，那里会看到拒绝）
+
+=== 4) 过滤器语法速记（jdk.serialFilter 的写法）===
+    类名或包名，用 ! 表示拒绝、不带前缀表示允许、* 通配
+    例：-Djdk.serialFilter="!SecDeserFilter$Dangerous;java.base/*;!*"
+    含义：先明确拒绝危险类，再放行 java.base 下的类，最后拒绝其余一切。
+
+########## SecDeserFilter（带 -Djdk.serialFilter 的进程级过滤器） ##########
+载荷字节数 = 45
+
+=== 1) 不加任何过滤器：载荷自由执行 ===
+    结果：抛 InvalidClassException: filter status: REJECTED
+
+=== 2) 流级过滤器：只放行自己认识的类（白名单思路）===
+    过滤器看到类 SecDeserFilter$Dangerous → 拒绝
+    结果：抛 InvalidClassException -> filter status: REJECTED
+    副作用触发次数 = 0（0 就是拦住了）
+
+=== 3) 进程级过滤器（-Djdk.serialFilter）：启动参数就能兜底 ===
+    本进程生效的全局过滤器 = !SecDeserFilter$Dangerous;java.base/*;!*
+    结果：全局过滤器拦下 → InvalidClassException: filter status: REJECTED
+    副作用触发次数 = 0（0 就是拦住了）
+
+=== 4) 过滤器语法速记（jdk.serialFilter 的写法）===
+    类名或包名，用 ! 表示拒绝、不带前缀表示允许、* 通配
+    例：-Djdk.serialFilter="!SecDeserFilter$Dangerous;java.base/*;!*"
+    含义：先明确拒绝危险类，再放行 java.base 下的类，最后拒绝其余一切。
+
+########## SecClassLoader（内存马原理：从字节数组定义类） ##########
+读到 Payload.class 字节数 = 342（从这里开始就不再需要那个文件了）
+
+=== 1) 先看「不绕委派」会怎样：父加载器赢，字节白读了 ===
+    委派型加载器拿到的类 = class Payload，加载器 = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+    直接用 Class.forName 拿到的类 = class Payload，加载器 = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+    两者是同一个类吗？true  ← true 说明父加载器先命中，findClass 根本没被调用（双亲委派在起作用）
+
+=== 2) 绕过委派：字节数组变成真正独立的一个类 ===
+    调用结果：我是被从内存字节里定义出来的类（磁盘上没有我的定义）
+    这个类的加载器 = SecClassLoader$ByteLoader@7852e922
+    和上一步那个类相同吗？false  ← false：类身份 = 类名 + 定义它的加载器
+    再 new 一个同样的加载器定义一次：结果还等于上面这个吗？false  ← 每个加载器实例都是一个新类
+
+=== 3) 检测视角：内存里定义的类和磁盘上的类，哪里不一样 ===
+    绕过委派那个类的 CodeSource = (null <no signer certificates>)   ← null 表示「没有任何磁盘来源」
+    正常加载（走委派）那个类的 CodeSource = (file:/<用户目录>/AppData/Local/Temp/javasec-classes/ <no signer certificates>)
+    ↑ 正常部署的类会指向 jar 或 classes 目录；内存里 defineClass 出来的没有来源可查。
+
+=== 4) 双亲委派：默认是防篡改的，绕过它才叫内存马 ===
+    默认（loadClass → 先问父加载器）：同名类以父加载器找到的为准，
+    所以把恶意 class 塞进 classpath 的**顺序**改不掉结果，改了磁盘文件也拦不住篡改。
+    绕过后：defineClass 出来的类与父加载器那个同名类**可以并存**，来源为 null、不落盘——
+    这就是「内存马」查不到文件的机制层面原因（另一边要靠 dump 堆/查已加载类来找）。
+
+########## SecDangerApis（常见攻击面 API 的默认行为） ##########
+=== 1) 命令执行原语：ProcessBuilder / Runtime.exec ===
+    执行 cmd /c echo … → 输出: hello-from-java，退出码 0
+    注意：Java 不做任何「命令安全」判断，参数怎么拼就怎么执行；
+    要防的是**把不可信输入拼进这里**（拼接式命令注入），不是这个 API 本身。
+    Runtime.exec(String[]) 形式可用（数组形式不经 shell，分隔符不会被当元字符）
+    ProcessBuilder 重定向到文件也是同一个原语：sec14911365403554662277.txt
+
+=== 2) XXE：默认配置下外部实体解不解析？（本机实测）===
+    实体指向的本机文件: <用户目录>\AppData\Local\Temp\secret11563511961023803866.txt
+    XML 里用的 URI:    file:///<用户目录>/AppData/Local/Temp/secret11563511961023803866.txt
+    -- 默认 newInstance() --
+    解析成功，实体内容 = "SECRET-CONTENT-1234567890"
+    ↑ 默认配置下外部实体**被展开了**：这就是 XXE 能读到本机文件的原因
+    -- 加固写法（禁用 DTD 与外部实体）--
+[Fatal Error] xxe8944254658624819798.xml:2:10: 将功能 "http://apache.org/xml/features/disallow-doctype-decl" 设置为“真”时, 不允许使用 DOCTYPE。
+    被拒：SAXParseException: 将功能 "http://apache.org/xml/features/disallow-doctype-decl" 设置为“真”时, 不允许使用 DOCTYPE。
+
+=== 3) XMLDecoder：把 XML 直接「还原成对象」的另一个反序列化入口 ===
+    输入 XML 里写了类名与方法名，看它会不会照做：
+    >> [副作用触发 #1] Bean.setValue(来自XML的调用)
+    还原出的对象 = SecDangerApis$Bean，value = 来自XML的调用
+    setter 被调用次数 = 1 ← 又一处「数据变代码」
+    加固：不要用 XMLDecoder 读外部数据；必须读时用 ObjectInputFilter 或干脆换成 JSON + 显式校验。
+
+=== 4) 脚本引擎：Nashorn 已移除，这条老路本机走不通 ===
+    getEngineByName("nashorn") = null（null 表示本 JDK 没有 JS 引擎）
+
+=== 5) 路径遍历：API 层不管「..」，要自己规范化 ===
+    直接用拼出来的路径读: secbase<随机数>-escape.txt
+    → 读到内容: outside（跨出了 base 目录）
+    规范化后: true
+    纪律：base.resolve(userInput).normalize().startsWith(base) 才允许读。
+
+########## SecJndi（JNDI 注入：默认会不会去下载远程类） ##########
+=== 0) 先看默认属性 ===
+    com.sun.jndi.rmi.object.trustURLCodebase = (未设置 → 用 JVM 内置默认)
+    com.sun.jndi.ldap.object.trustURLCodebase = (未设置 → 用 JVM 内置默认)
+    com.sun.jndi.cosnaming.object.trustURLCodebase = (未设置 → 用 JVM 内置默认)
+
+=== 1) 本地起一个 HTTP 服务（充当攻击者的类托管点）===
+    监听 127.0.0.1:64599，只统计请求数，不返回任何可加载的类
+    codebase = http://127.0.0.1:64599/
+
+=== 2) 路径 A：NamingManager.getObjectInstance(Reference) ===
+    （任何把不可信数据当 Reference 处理的库，走的都是这一条）
+    返回: Reference Class Name: Evil
+
+    HTTP 收到的请求数 = 0   ← 0：没去下载远程工厂类
+
+=== 3) 路径 B：JNDI lookup 一个 RMI 上绑定的 Reference ===
+    先问一个关键问题：那条经典链的构造工具（内部类）在本 JDK 还够得着吗？
+      com.sun.jndi.rmi.registry.ReferenceWrapper → 可加载：class com.sun.jndi.rmi.registry.ReferenceWrapper
+      com.sun.jndi.rmi.registry.RemoteReference → 可加载：interface com.sun.jndi.rmi.registry.RemoteReference
+    地址: rmi://127.0.0.1:2204/evil
+    lookup 返回: Proxy[SecJndi$RefService,RemoteObjectInvocationHandler[UnicastRef [liveRef: [endpoint:[<本机内网地址>:<端口>](remote),objID:[6f789db1:1a0f766332b:-7fff, -1204976224221270448]]]]]（类型 jdk.proxy1.$Proxy0）
+    HTTP 收到的请求数 = 0   ← 0：没去下载远程类
+
+=== 4) 对照：显式把 com.sun.jndi.rmi.object.trustURLCodebase 打开再 lookup 一次 ===
+    lookup 返回: Proxy[SecJndi$RefService,RemoteObjectInvocationHandler[UnicastRef [liveRef: [endpoint:[<本机内网地址>:<端口>](remote),objID:[6f789db1:1a0f766332b:-7fff, -1204976224221270448]]]]]（类型 jdk.proxy1.$Proxy0）
+    HTTP 收到的请求数 = 0   ← 开关开了仍没去取（还有别的拦截）
+
+=== 5) 结论（本机实测）===
+    JNDI 只是「按名字找东西」的 API；危险的是「把远程 URL 上的类当工厂加载」这个能力。
+    现代 JDK 在 provider 层默认不信任远程 codebase，所以这条老路默认打不动；
+    而库自己拿不可信数据去调 NamingManager 时，局面取决于库怎么做 —— 见上面路径 A 的读数。
+（本程序显式 System.exit(0)：RMI/HTTP 的线程是非守护线程，不会自己结束）
+
+########## javaagent（运行期替换已加载的类：内存马/热部署的同一套 API） ##########
+    [agent] premain 已执行，拿到 Instrumentation（主程序还没开始）
+    [agent] 进程内已加载类数量 = 904
+    [agent] 能改动已加载的类吗？true / 能重新定义吗？true
+=== javaagent 运行期替换已加载的类 ===
+    [主程序] 加载器 = jdk.internal.loader.ClassLoaders$AppClassLoader@73d16e93
+    [主程序] 替换前 status() = 原始实现：我是磁盘上编译出来的那个版本
+
+    -- 现在让 agent 用另一份字节码替换这个类 --
+    [agent] 补丁字节数 = 1871，目标类 = class Victim
+    [agent] 该类可被重新定义吗？true
+    [agent] redefineClasses 完成 —— 磁盘上没有任何文件被改动
+
+    [主程序] 替换后 status() = 补丁实现：我是被 agent 在运行期塞进去的那份代码
+    ↑ 同一个 Class 对象、同一份已加载代码，实现被换掉了；
+      磁盘上的 Victim.class 从头到尾没变（可核对修改时间）。
+
+--- 对照：不带 -javaagent 跑同一个类（磁盘实现没被改过）---
+=== javaagent 运行期替换已加载的类 ===
+    [主程序] 加载器 = jdk.internal.loader.ClassLoaders$AppClassLoader@105be200
+    [主程序] 替换前 status() = 原始实现：我是磁盘上编译出来的那个版本
+
+    -- 现在让 agent 用另一份字节码替换这个类 --
+    [agent] 没有 Instrumentation，跳过
+
+    [主程序] 替换后 status() = 原始实现：我是磁盘上编译出来的那个版本
+    ↑ 同一个 Class 对象、同一份已加载代码，实现被换掉了；
+      磁盘上的 Victim.class 从头到尾没变（可核对修改时间）。
+
+==================================================================
+=== 【体检批次】2026-10-01 20:26:06  JDK: openjdk version "25.0.4.1" 2026-08-18 LTS
+=== 工具：javac -Xlint:all / jdeprscan / jdeps / javap / jcmd / jfr   （脚本 checkup.sh）
+=== 提醒：只扫本目录自建靶子，只读；不下载、不落地、不对外
+==================================================================
+
+########## 体检 1：javac -Xlint:all（编译期能替你抓到的可疑模式） ##########
+SecBoundary.java:15: 警告: [removal] System 中的 getSecurityManager() 已过时, 且标记为待删除
+            Object sm = System.getSecurityManager();
+                              ^
+SecBoundary.java:21: 警告: [removal] System 中的 setSecurityManager(SecurityManager) 已过时, 且标记为待删除
+            System.setSecurityManager(null);
+                  ^
+SecJndi.java:28: 警告: [serial] 可序列化类RefServiceImpl没有 serialVersionUID 的定义
+    public static class RefServiceImpl extends UnicastRemoteObject implements RefService {
+                  ^
+3 个警告
+
+########## 体检 2：jdeprscan --for-removal（扫「已标记待删除」的 API） ##########
+目录 <用户目录>\AppData\Local/Temp/javasec-checkup-classes:
+class SecBoundary 使用已过时的方法 java/lang/System::getSecurityManager()Ljava/lang/SecurityManager; (forRemoval=true)
+class SecBoundary 使用已过时的方法 java/lang/System::setSecurityManager(Ljava/lang/SecurityManager;)V (forRemoval=true)
+
+########## 体检 3：jdeps --jdk-internals（查有没有静态引用 JDK 内部 API） ##########
+
+########## 体检 4：jdeps -summary（每个类依赖哪些模块——攻击面就是这些面） ##########
+Payload.class -> java.base
+SecAgent.class -> java.base
+SecAgent.class -> java.instrument
+SecBoundary.class -> java.base
+SecClassLoader$ByteLoader.class -> java.base
+SecClassLoader.class -> java.base
+SecDangerApis$Bean.class -> java.base
+SecDangerApis$SideEffect.class -> java.base
+SecDangerApis.class -> java.base
+SecDangerApis.class -> java.desktop
+SecDangerApis.class -> java.xml
+SecDeserBasic$Cmp.class -> java.base
+SecDeserBasic$Hit.class -> java.base
+SecDeserBasic$Key.class -> java.base
+SecDeserBasic$WithHook.class -> java.base
+SecDeserBasic.class -> java.base
+SecDeserFilter$Dangerous.class -> java.base
+SecDeserFilter$Hit.class -> java.base
+SecDeserFilter.class -> java.base
+SecJndi$RefService.class -> java.base
+SecJndi$RefService.class -> java.rmi
+SecJndi$RefServiceImpl.class -> java.base
+SecJndi$RefServiceImpl.class -> java.naming
+SecJndi$RefServiceImpl.class -> java.rmi
+SecJndi.class -> java.base
+SecJndi.class -> java.naming
+SecJndi.class -> java.rmi
+SecJndi.class -> jdk.httpserver
+Victim.class -> java.base
+
+########## 体检 5：javap 找「反序列化钩子」（readObject/readResolve/writeReplace） ##########
+-- SecDeserBasic$WithHook --
+Compiled from "SecDeserBasic.java"
+class SecDeserBasic$WithHook implements java.io.Serializable {
+  private static final long serialVersionUID;
+  private java.lang.String tag;
+  SecDeserBasic$WithHook();
+  private void readObject(java.io.ObjectInputStream) throws java.io.IOException, java.lang.ClassNotFoundException;
+}
+-- SecDeserBasic$Cmp --
+Compiled from "SecDeserBasic.java"
+class SecDeserBasic$Cmp implements java.lang.Comparable<SecDeserBasic$Cmp>, java.io.Serializable {
+  private static final long serialVersionUID;
+  final int pri;
+  SecDeserBasic$Cmp(int);
+  public int compareTo(SecDeserBasic$Cmp);
+  public int compareTo(java.lang.Object);
+}
+-- SecDeserBasic$Key --
+Compiled from "SecDeserBasic.java"
+class SecDeserBasic$Key implements java.io.Serializable {
+  private static final long serialVersionUID;
+  final java.lang.String id;
+  SecDeserBasic$Key(java.lang.String);
+  public int hashCode();
+  public boolean equals(java.lang.Object);
+}
+
+########## 体检 6：jcmd 看一个运行中的 JVM（启动参数 / 属性 / 类直方图） ##########
+-- jcmd -l --
+14452 Sleeper
+15928 jdk.jcmd/sun.tools.jcmd.JCmd -l
+-- jcmd 14452 VM.command_line --
+14452:
+VM Arguments:
+jvm_args: -Dstdout.encoding=UTF-8 -Djdk.serialFilter=java.base/*;!* 
+java_command: Sleeper
+java_class_path (initial): <用户目录>\AppData\Local/Temp/javasec-checkup-classes
+Launcher Type: SUN_STANDARD
+-- jcmd 14452 VM.system_properties | grep 安全开关 --
+jdk.serialFilter=java.base/*;\!*
+-- jcmd 14452 GC.class_histogram（前 6 行）--
+14452:
+ num     #instances         #bytes  class name (module)
+-------------------------------------------------------
+   1:         12012         636008  [B (java.base@25.0.4.1)
+   2:         11585         278040  java.lang.String (java.base@25.0.4.1)
+   3:          1781         235160  java.lang.Class (java.base@25.0.4.1)
+
+########## 体检 7：jfr 记录运行期改类（内存马/热部署会留下什么事件） ##########
+
+    [主程序] 替换后 status() = 补丁实现：我是被 agent 在运行期塞进去的那份代码
+    ↑ 同一个 Class 对象、同一份已加载代码，实现被换掉了；
+      磁盘上的 Victim.class 从头到尾没变（可核对修改时间）。
+-- jfr print --events jdk.JavaAgent --
+jdk.JavaAgent {
+  startTime = 20:26:19.016 (2026-10-01)
+  name = "<用户目录>\AppData\Local/Temp/javasec-checkup-agent/agent.jar"
+  options = N/A
+  dynamic = false
+  initializationTime = 20:26:18.584 (2026-10-01)
+  initializationDuration = 17.8 ms
+}
+
+-- 相关事件计数 --
+ jdk.ClassRedefinition                       1            11
+ jdk.JavaAgent                               1            83
+ jdk.RedefineClasses                         1            15
+ jdk.ClassDefine                             0             0
+ jdk.ModuleExport                            0             0
+-- 本 JDK 里与 Java 安全相关的 JFR 事件类型 --
+jdk.ClassDefine
+jdk.ClassLoad
+jdk.ClassLoaderStatistics
+jdk.ClassLoadingStatistics
+jdk.ClassRedefinition
+jdk.Deserialization
+jdk.InitialEnvironmentVariable
+jdk.InitialSecurityProperty
+jdk.JavaAgent
+jdk.ModuleExport
+jdk.ModuleRequire
+jdk.NativeAgent
+jdk.RedefineClasses
+jdk.RetransformClasses
+jdk.SecurityPropertyModification
+
+########## 体检 8：jlink 的最小化思路（能裁掉哪些模块 = 少掉哪些攻击面） ##########
+-- 本机 JDK 的模块总数 --
+70
+-- 只含 java.base 的最小镜像（体积在下面一行）--
+50M
+-- 被裁掉的诊断模块举例（要留就得显式 --add-modules）--
+(本机 jlink --list-modules 无此类输出)
+
+==================================================================
+=== 【体检批次】2026-10-01 20:34:06  JDK: openjdk version "25.0.4.1" 2026-08-18 LTS
+=== 工具：javac -Xlint:all / jdeprscan / jdeps / javap / jcmd / jfr   （脚本 checkup.sh）
+=== 提醒：只扫本目录自建靶子，只读；不下载、不落地、不对外
+==================================================================
+
+########## 体检 1：javac -Xlint:all（编译期能替你抓到的可疑模式） ##########
+SecBoundary.java:15: 警告: [removal] System 中的 getSecurityManager() 已过时, 且标记为待删除
+            Object sm = System.getSecurityManager();
+                              ^
+SecBoundary.java:21: 警告: [removal] System 中的 setSecurityManager(SecurityManager) 已过时, 且标记为待删除
+            System.setSecurityManager(null);
+                  ^
+SecJndi.java:28: 警告: [serial] 可序列化类RefServiceImpl没有 serialVersionUID 的定义
+    public static class RefServiceImpl extends UnicastRemoteObject implements RefService {
+                  ^
+3 个警告
+
+########## 体检 2：jdeprscan --for-removal（扫「已标记待删除」的 API） ##########
+目录 <用户目录>\AppData\Local/Temp/javasec-checkup-classes:
+class SecBoundary 使用已过时的方法 java/lang/System::getSecurityManager()Ljava/lang/SecurityManager; (forRemoval=true)
+class SecBoundary 使用已过时的方法 java/lang/System::setSecurityManager(Ljava/lang/SecurityManager;)V (forRemoval=true)
+
+########## 体检 3：jdeps --jdk-internals（查有没有静态引用 JDK 内部 API） ##########
+
+########## 体检 4：jdeps -summary（每个类依赖哪些模块——攻击面就是这些面） ##########
+Payload.class -> java.base
+SecAgent.class -> java.base
+SecAgent.class -> java.instrument
+SecBoundary.class -> java.base
+SecClassLoader$ByteLoader.class -> java.base
+SecClassLoader.class -> java.base
+SecDangerApis$Bean.class -> java.base
+SecDangerApis$SideEffect.class -> java.base
+SecDangerApis.class -> java.base
+SecDangerApis.class -> java.desktop
+SecDangerApis.class -> java.xml
+SecDeserBasic$Cmp.class -> java.base
+SecDeserBasic$Hit.class -> java.base
+SecDeserBasic$Key.class -> java.base
+SecDeserBasic$WithHook.class -> java.base
+SecDeserBasic.class -> java.base
+SecDeserFilter$Dangerous.class -> java.base
+SecDeserFilter$Hit.class -> java.base
+SecDeserFilter.class -> java.base
+SecJndi$RefService.class -> java.base
+SecJndi$RefService.class -> java.rmi
+SecJndi$RefServiceImpl.class -> java.base
+SecJndi$RefServiceImpl.class -> java.naming
+SecJndi$RefServiceImpl.class -> java.rmi
+SecJndi.class -> java.base
+SecJndi.class -> java.naming
+SecJndi.class -> java.rmi
+SecJndi.class -> jdk.httpserver
+Victim.class -> java.base
+
+########## 体检 5：javap 找「反序列化钩子」（readObject/readResolve/writeReplace） ##########
+-- SecDeserBasic$WithHook --
+Compiled from "SecDeserBasic.java"
+class SecDeserBasic$WithHook implements java.io.Serializable {
+  private static final long serialVersionUID;
+  private java.lang.String tag;
+  SecDeserBasic$WithHook();
+  private void readObject(java.io.ObjectInputStream) throws java.io.IOException, java.lang.ClassNotFoundException;
+}
+-- SecDeserBasic$Cmp --
+Compiled from "SecDeserBasic.java"
+class SecDeserBasic$Cmp implements java.lang.Comparable<SecDeserBasic$Cmp>, java.io.Serializable {
+  private static final long serialVersionUID;
+  final int pri;
+  SecDeserBasic$Cmp(int);
+  public int compareTo(SecDeserBasic$Cmp);
+  public int compareTo(java.lang.Object);
+}
+-- SecDeserBasic$Key --
+Compiled from "SecDeserBasic.java"
+class SecDeserBasic$Key implements java.io.Serializable {
+  private static final long serialVersionUID;
+  final java.lang.String id;
+  SecDeserBasic$Key(java.lang.String);
+  public int hashCode();
+  public boolean equals(java.lang.Object);
+}
+
+########## 体检 6：jcmd 看一个运行中的 JVM（启动参数 / 属性 / 类直方图） ##########
+-- jcmd -l --
+11872 Sleeper
+23420 jdk.jcmd/sun.tools.jcmd.JCmd -l
+-- jcmd 11872 VM.command_line --
+11872:
+VM Arguments:
+jvm_args: -Dstdout.encoding=UTF-8 -Djdk.serialFilter=java.base/*;!* 
+java_command: Sleeper
+java_class_path (initial): <用户目录>\AppData\Local/Temp/javasec-checkup-classes
+Launcher Type: SUN_STANDARD
+-- jcmd 11872 VM.system_properties | grep 安全开关 --
+jdk.serialFilter=java.base/*;\!*
+-- jcmd 11872 GC.class_histogram（前 6 行）--
+11872:
+ num     #instances         #bytes  class name (module)
+-------------------------------------------------------
+   1:         12012         636008  [B (java.base@25.0.4.1)
+   2:         11585         278040  java.lang.String (java.base@25.0.4.1)
+   3:          1781         235160  java.lang.Class (java.base@25.0.4.1)
+
+########## 体检 7：jfr 记录运行期改类（内存马/热部署会留下什么事件） ##########
+
+    [主程序] 替换后 status() = 补丁实现：我是被 agent 在运行期塞进去的那份代码
+    ↑ 同一个 Class 对象、同一份已加载代码，实现被换掉了；
+      磁盘上的 Victim.class 从头到尾没变（可核对修改时间）。
+-- jfr print --events jdk.JavaAgent --
+jdk.JavaAgent {
+  startTime = 20:34:18.314 (2026-10-01)
+  name = "<用户目录>\AppData\Local/Temp/javasec-checkup-agent/agent.jar"
+  options = N/A
+  dynamic = false
+  initializationTime = 20:34:17.906 (2026-10-01)
+  initializationDuration = 13.3 ms
+}
+
+-- 相关事件计数 --
+ jdk.ClassRedefinition                       1            11
+ jdk.JavaAgent                               1            83
+ jdk.RedefineClasses                         1            15
+ jdk.ClassDefine                             0             0
+ jdk.ModuleExport                            0             0
+-- 本 JDK 里与 Java 安全相关的 JFR 事件类型 --
+jdk.ClassDefine
+jdk.ClassLoad
+jdk.ClassLoaderStatistics
+jdk.ClassLoadingStatistics
+jdk.ClassRedefinition
+jdk.Deserialization
+jdk.InitialEnvironmentVariable
+jdk.InitialSecurityProperty
+jdk.JavaAgent
+jdk.ModuleExport
+jdk.ModuleRequire
+jdk.NativeAgent
+jdk.RedefineClasses
+jdk.RetransformClasses
+jdk.SecurityPropertyModification
+
+########## 体检 8：jlink 的最小化思路（能裁掉哪些模块 = 少掉哪些攻击面） ##########
+-- 本机 JDK 的模块总数 --
+70
+-- 只含 java.base 的最小镜像（体积在下面一行）--
+50M
+-- 被裁掉的诊断模块举例（要留就得显式 --add-modules）--
+(本机 jlink --list-modules 无此类输出)
